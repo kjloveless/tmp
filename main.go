@@ -1,8 +1,15 @@
 package main
 
 import (
+  "log"
+  "os"
+  "time"
+
   tea "github.com/charmbracelet/bubbletea"
   "github.com/charmbracelet/bubbles/viewport"
+
+  "github.com/gopxl/beep/mp3"
+  "github.com/gopxl/beep/speaker"
 )
 
 type model struct {
@@ -38,6 +45,20 @@ func main() {
     vp: vp,
   }
   m.vp.SetContent(m.message)
+
+  f, err := os.Open("break.mp3")
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  streamer, format, err := mp3.Decode(f)
+  if err != nil {
+    log.Fatal(err)
+  }
+  defer streamer.Close()
+
+  speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
+  speaker.Play(streamer)
 
   p := tea.NewProgram(m)
   if _, err := p.Run(); err != nil {
