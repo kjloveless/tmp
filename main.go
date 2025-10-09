@@ -37,7 +37,7 @@ func main() {
     message: message,
     vp: vp,
   }
-  m.vp.SetContent(message)
+  m.vp.SetContent(m.message)
 
   p := tea.NewProgram(m)
   if _, err := p.Run(); err != nil {
