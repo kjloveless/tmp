@@ -46,7 +46,7 @@ func main() {
   }
   m.vp.SetContent(m.message)
 
-  f, err := os.Open("break.mp3")
+  f, err := os.Open("sounds/break.mp3")
   if err != nil {
     log.Fatal(err)
   }
