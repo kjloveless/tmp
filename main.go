@@ -49,13 +49,13 @@ func (m model) Init() tea.Cmd {
 func (m model) View() string {
 	var builder strings.Builder
 	for i, song := range m.songs {
+		songName := filepath.Base(song)
 		if m.cursor == i {
-			fmt.Fprintf(&builder, "> %d: %s\n", i+1, song)
+			fmt.Fprintf(&builder, "> %d: %s\n", i+1, songName)
 		} else {
-			fmt.Fprintf(&builder, "%d: %s\n", i+1, song)
+			fmt.Fprintf(&builder, "%d: %s\n", i+1, songName)
 		}
 	}
-	builder.WriteString("---------END OF LIST---------")
 	m.vp.SetContent(builder.String())
 
 	return m.vp.View()
