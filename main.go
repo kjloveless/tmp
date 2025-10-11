@@ -34,7 +34,11 @@ func playSongCmd(path string) tea.Cmd {
 			return nil
 		}
 
-		speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
+		err = speaker.Init(format.SampleRate, format.SampleRate.N(time.Second/10))
+		if err != nil {
+			log.Printf("Error Init Speaker : %v", err)
+			return nil
+		}
 
 		speaker.Play(streamer)
 
