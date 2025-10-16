@@ -101,7 +101,11 @@ func (m model) View() string {
 		builder.WriteString(statusStyle.Render(fmt.Sprintf("❌ Error: %v", m.err)))
 	} else if m.playing.title != "" {
 		builder.WriteString(statusStyle.Render(fmt.Sprintf("🎵 Now Playing: %s", m.playing.title)))
-    builder.WriteString(statusStyle.Render("\n" + m.progress.ViewAs(m.playing.Percent())))
+    builder.WriteString(statusStyle.Render(
+      "\n" + 
+      m.progress.ViewAs(m.playing.Percent()) + 
+      " " +
+      m.playing.Position().Round(time.Millisecond).String() + "/" +m.playing.Length().Round(time.Millisecond).String()))
 	} else {
 		builder.WriteString(statusStyle.Render("Select an MP3 file to play."))
 	}
@@ -160,6 +164,7 @@ func main() {
 	fp.CurrentDirectory = initPath
 
   prog := progress.New(progress.WithScaledGradient("#ff7ccb", "#fdff8c"))
+  prog.ShowPercentage = false
 
 	m := model{
 		filepicker: fp,
