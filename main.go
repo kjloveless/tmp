@@ -95,9 +95,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	if didSelect, path := m.filepicker.DidSelectFile(msg); didSelect {
 		if strings.HasSuffix(strings.ToLower(path), ".mp3") {
+			m.playing = filepath.Base(path)
 			return m, playSongCmd(path)
 		}
 	}
+	m.playing = ""
 	return m, cmd
 }
 
