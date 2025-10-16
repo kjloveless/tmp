@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/bubbles/filepicker"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -22,31 +22,15 @@ type directoryReadMsg struct {
 }
 
 type model struct {
-	currentPath string
-	entries     []os.DirEntry
-	cursor      int
-	vp          viewport.Model
+	playing    string
+	filepicker filepicker.Model
+	err        error
 }
 
-func readDirectory(path string) ([]os.DirEntry, error) {
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		log.Println("ERROR: Reading directories")
-		return nil, err
-	}
-	return entries, nil
-}
-
-func changeDirectoryCmd(path string) tea.Cmd {
-	return func() tea.Msg {
-		entries, err := readDirectory(path)
-		if err != nil {
-			log.Println("ERROR: Reading directories")
-			return nil
-		}
-		return directoryReadMsg{path: path, entries: entries}
-	}
-}
+type (
+	songPlayingMsg string
+	errorMsg       error
+)
 
 func playSongCmd(path string) tea.Cmd {
 	return func() tea.Msg {
@@ -70,81 +54,51 @@ func playSongCmd(path string) tea.Cmd {
 }
 
 func (m model) Init() tea.Cmd {
-	return changeDirectoryCmd(m.currentPath)
+	return m.filepicker.Init()
 }
 
 func (m model) View() string {
 	var builder strings.Builder
 
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-	builder.WriteString(headerStyle.Render("Current Path: " + m.currentPath))
+	builder.WriteString(m.filepicker.View())
 	builder.WriteString("\n")
-	if m.cursor == 0 {
-		builder.WriteString("> ..\n")
+	statusStyle := lipgloss.NewStyle().Padding(0, 1)
+	if m.err != nil {
+		builder.WriteString(statusStyle.Render(fmt.Sprintf("❌ Error: %v", m.err)))
+	} else if m.playing != "" {
+		builder.WriteString(statusStyle.Render(fmt.Sprintf("🎵 Now Playing: %s", m.playing)))
 	} else {
-		builder.WriteString(" ..\n")
-	}
-	for i, entry := range m.entries {
-		name := entry.Name()
-		if entry.IsDir() {
-			name += "/"
-		}
-
-		if m.cursor == i+1 {
-			fmt.Fprintf(&builder, "> %s\n", name)
-		} else {
-			fmt.Fprintf(&builder, "  %s\n", name)
-		}
+		builder.WriteString(statusStyle.Render("Select an MP3 file to play."))
 	}
 
-	m.vp.SetContent(builder.String())
-
-	return m.vp.View()
+	return builder.String()
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case directoryReadMsg:
-		m.currentPath = msg.path
-		m.entries = msg.entries
-		m.cursor = 0
-		return m, nil
 	case tea.KeyMsg:
 		switch msg.Type {
-
 		case tea.KeyEsc, tea.KeyCtrlC:
 			return m, tea.Quit
+		}
+	case songPlayingMsg:
+		m.playing = string(msg)
+		m.err = nil
+		return m, nil
 
-		case tea.KeyUp:
-			if m.cursor > 0 {
-				m.cursor--
-			} else {
-				m.cursor = len(m.entries)
-			}
-		case tea.KeyDown:
-			if m.cursor < len(m.entries) {
-				m.cursor++
-			} else {
-				m.cursor = 0
-			}
+	case errorMsg:
+		m.err = msg
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.filepicker, cmd = m.filepicker.Update(msg)
 
-		case tea.KeyEnter:
-			var newPath string
-			if m.cursor == 0 {
-				newPath = filepath.Dir(m.currentPath)
-				return m, changeDirectoryCmd(newPath)
-			}
-			selectedEntry := m.entries[m.cursor-1]
-			newPath = filepath.Join(m.currentPath, selectedEntry.Name())
-			if selectedEntry.IsDir() {
-				return m, changeDirectoryCmd(newPath)
-			} else if strings.HasSuffix(strings.ToLower(selectedEntry.Name()), ".mp3") {
-				return m, playSongCmd(newPath)
-			}
+	if didSelect, path := m.filepicker.DidSelectFile(msg); didSelect {
+		if strings.HasSuffix(strings.ToLower(path), ".mp3") {
+			return m, playSongCmd(path)
 		}
 	}
-
-	return m, nil
+	return m, cmd
 }
 
 func main() {
@@ -155,12 +109,12 @@ func main() {
 	if _, err := os.Stat(initPath); os.IsNotExist(err) {
 		log.Fatalf("Directory does not exist: %s", initPath)
 	}
-	vp := viewport.New(80, 20)
+	fp := filepicker.New()
+	fp.AllowedTypes = []string{".mp3"}
+	fp.CurrentDirectory = initPath
 
 	m := model{
-		currentPath: initPath,
-		cursor:      0,
-		vp:          vp,
+		filepicker: fp,
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
