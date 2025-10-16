@@ -8,18 +8,29 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/bubbles/filepicker"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/gopxl/beep/mp3"
 	"github.com/gopxl/beep/speaker"
 )
 
-type model struct {
-	songs  []string
-	cursor int
-	vp     viewport.Model
+type directoryReadMsg struct {
+	path    string
+	entries []os.DirEntry
 }
+
+type model struct {
+	playing    string
+	filepicker filepicker.Model
+	err        error
+}
+
+type (
+	songPlayingMsg string
+	errorMsg       error
+)
 
 func playSongCmd(path string) tea.Cmd {
 	return func() tea.Msg {
@@ -43,22 +54,24 @@ func playSongCmd(path string) tea.Cmd {
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	return m.filepicker.Init()
 }
 
 func (m model) View() string {
 	var builder strings.Builder
-	for i, song := range m.songs {
-		songName := filepath.Base(song)
-		if m.cursor == i {
-			fmt.Fprintf(&builder, "> %d: %s\n", i+1, songName)
-		} else {
-			fmt.Fprintf(&builder, "%d: %s\n", i+1, songName)
-		}
-	}
-	m.vp.SetContent(builder.String())
 
-	return m.vp.View()
+	builder.WriteString(m.filepicker.View())
+	builder.WriteString("\n")
+	statusStyle := lipgloss.NewStyle().Padding(0, 1)
+	if m.err != nil {
+		builder.WriteString(statusStyle.Render(fmt.Sprintf("❌ Error: %v", m.err)))
+	} else if m.playing != "" {
+		builder.WriteString(statusStyle.Render(fmt.Sprintf("🎵 Now Playing: %s", m.playing)))
+	} else {
+		builder.WriteString(statusStyle.Render("Select an MP3 file to play."))
+	}
+
+	return builder.String()
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -67,53 +80,46 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyEsc, tea.KeyCtrlC:
 			return m, tea.Quit
-		case tea.KeyUp:
-			if m.cursor > 0 {
-				m.cursor--
-			} else {
-				m.cursor = len(m.songs) - 1 // wrap around logic
-			}
-		case tea.KeyDown:
-			if m.cursor < len(m.songs)-1 {
-				m.cursor++
-			} else {
-				m.cursor = 0
-			}
+		}
+	case songPlayingMsg:
+		m.playing = string(msg)
+		m.err = nil
+		return m, nil
 
-		case tea.KeyEnter:
-			selectedSong := m.songs[m.cursor]
-			return m, playSongCmd(selectedSong)
+	case errorMsg:
+		m.err = msg
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.filepicker, cmd = m.filepicker.Update(msg)
+
+	if didSelect, path := m.filepicker.DidSelectFile(msg); didSelect {
+		if strings.HasSuffix(strings.ToLower(path), ".mp3") {
+			m.playing = filepath.Base(path)
+			return m, playSongCmd(path)
 		}
 	}
-
-	return m, nil
+	m.playing = ""
+	return m, cmd
 }
 
 func main() {
-	root := "./sounds"
-	songs := make([]string, 0, 5)
-
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			fmt.Printf("prevent panic by handling error: %v\n", err)
-			return err
-		}
-		if !info.IsDir() {
-			songs = append(songs, path)
-		}
-		return nil
-	})
+	initPath, err := filepath.Abs("./sounds")
 	if err != nil {
 		log.Fatal(err)
 	}
-	vp := viewport.New(0, len(songs))
+	if _, err := os.Stat(initPath); os.IsNotExist(err) {
+		log.Fatalf("Directory does not exist: %s", initPath)
+	}
+	fp := filepicker.New()
+	fp.AllowedTypes = []string{".mp3"}
+	fp.CurrentDirectory = initPath
+
 	m := model{
-		songs:  songs,
-		cursor: 0,
-		vp:     vp,
+		filepicker: fp,
 	}
 
-	p := tea.NewProgram(m)
+	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		panic(err)
 	}
