@@ -23,15 +23,19 @@ type track struct {
   streamer  beep.StreamSeeker
   format    *beep.Format
   title     string
+  length    time.Duration
 }
 func (t track) Position() time.Duration {
   return t.format.SampleRate.D(t.streamer.Position())
 }
-func (t track) Length() time.Duration {
-  return t.format.SampleRate.D(t.streamer.Len())
-}
 func (t track) Percent() float64 {
-  return t.Position().Round(time.Second).Seconds() / t.Length().Round(time.Second).Seconds()
+  return t.Position().Round(time.Second).Seconds() / t.length.Round(time.Second).Seconds()
+}
+func (t track) String() string {
+  return fmt.Sprintf(
+    "%s : %s", 
+    t.Position().Round(time.Second), 
+    t.length.Round(time.Second))
 }
 
 type directoryReadMsg struct {
@@ -69,7 +73,9 @@ func (m *model) playSongCmd(path string) tea.Cmd {
     track := track{
       streamer: streamer, 
       format: &format,
-      title: title}
+      title: title,
+      length: format.SampleRate.D(streamer.Len()),
+    }
 
 		speaker.Init(
       track.format.SampleRate, 
@@ -105,7 +111,7 @@ func (m model) View() string {
       "\n" + 
       m.progress.ViewAs(m.playing.Percent()) + 
       " " +
-      m.playing.Position().Round(time.Millisecond).String() + "/" +m.playing.Length().Round(time.Millisecond).String()))
+      m.playing.String()))
 	} else {
 		builder.WriteString(statusStyle.Render("Select an MP3 file to play."))
 	}
@@ -163,7 +169,7 @@ func main() {
 	fp.AllowedTypes = []string{".mp3"}
 	fp.CurrentDirectory = initPath
 
-  prog := progress.New(progress.WithScaledGradient("#ff7ccb", "#fdff8c"))
+  prog := progress.New(progress.WithScaledGradient("#ff7ccb", "#fdff8c"), progress.WithSpringOptions(6.0, .5))
   prog.ShowPercentage = false
 
 	m := model{
