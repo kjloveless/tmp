@@ -9,9 +9,12 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/filepicker"
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/kjloveless/tmp/internal/helpKey"
 
 	"github.com/gopxl/beep/v2"
 	"github.com/gopxl/beep/v2/mp3"
@@ -19,6 +22,7 @@ import (
 )
 
 type track struct {
+	ctrl     *beep.Ctrl
 	streamer beep.StreamSeeker
 	format   *beep.Format
 	title    string
@@ -40,17 +44,14 @@ func (t track) String() string {
 		t.length.Round(time.Second))
 }
 
-type directoryReadMsg struct {
-	path    string
-	entries []os.DirEntry
-}
-
 type model struct {
 	playing    track
 	pause      bool
 	progress   progress.Model
 	filepicker filepicker.Model
 	err        error
+	keys       helpKey.KeyMap
+	help       help.Model
 }
 
 type (
@@ -59,20 +60,6 @@ type (
 )
 
 type tickMsg time.Time
-
-func (t track) pauseSongCmd() tea.Cmd {
-	return func() tea.Msg {
-		speaker.Suspend()
-		return nil
-	}
-}
-
-func (t track) resumeSongCmd() tea.Cmd {
-	return func() tea.Msg {
-		speaker.Resume()
-		return nil
-	}
-}
 
 func (m *model) playSongCmd(path string) tea.Cmd {
 	return func() tea.Msg {
@@ -87,7 +74,9 @@ func (m *model) playSongCmd(path string) tea.Cmd {
 			return nil
 		}
 		title := filepath.Base(path)
+		ctrl := &beep.Ctrl{Streamer: streamer, Paused: false}
 		track := track{
+			ctrl:     ctrl,
 			streamer: streamer,
 			format:   &format,
 			title:    title,
@@ -98,15 +87,14 @@ func (m *model) playSongCmd(path string) tea.Cmd {
 			track.format.SampleRate,
 			track.format.SampleRate.N(time.Second/10))
 
-		speaker.Play(track.streamer)
-		speaker.Resume()
+		speaker.Play(track.ctrl)
 
 		return track
 	}
 }
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
@@ -137,27 +125,26 @@ func (m model) View() string {
 	} else {
 		builder.WriteString(statusStyle.Render("Select an MP3 file to play."))
 	}
-
+	helpView := m.help.View(m.keys)
+	builder.WriteString("\n" + helpView)
 	return builder.String()
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyEsc, tea.KeyCtrlC:
+		switch {
+		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
-		case tea.KeySpace:
+		case key.Matches(msg, m.keys.PlayPause):
 			if m.playing.title == "" {
 				return m, nil
 			}
-			if !m.pause {
-				m.pause = true
-				return m, m.playing.pauseSongCmd()
-			} else {
-				m.pause = false
-				return m, m.playing.resumeSongCmd()
-			}
+			speaker.Lock()
+			m.playing.ctrl.Paused = !m.playing.ctrl.Paused
+			speaker.Unlock()
+			m.pause = m.playing.ctrl.Paused
+			return m, nil
 		}
 	case songPlayingMsg:
 		m.playing.title = string(msg)
@@ -170,13 +157,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case track:
 		m.playing = msg
+		m.pause = false
 		return m, tickCmd()
 
 	case tickMsg:
-		if m.playing.Percent() > 1.0 {
-			return m, tea.Quit
+		if m.playing.streamer != nil && m.playing.Percent() >= 1.0 {
+			m.playing = track{}
+			m.pause = false
+			return m, nil
+		}
+		if m.playing.streamer == nil {
+			return m, nil
 		}
 		return m, tickCmd()
+
 	}
 	var cmd tea.Cmd
 	m.filepicker, cmd = m.filepicker.Update(msg)
@@ -186,7 +180,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.playSongCmd(path)
 		}
 	}
-	m.playing.title = ""
 	return m, cmd
 }
 
@@ -201,13 +194,14 @@ func main() {
 	fp := filepicker.New()
 	fp.AllowedTypes = []string{".mp3"}
 	fp.CurrentDirectory = initPath
-
 	prog := progress.New(progress.WithScaledGradient("#ff7ccb", "#fdff8c"), progress.WithSpringOptions(6.0, .5))
 	prog.ShowPercentage = false
 
 	m := model{
 		filepicker: fp,
 		progress:   prog,
+		keys:       helpKey.InitKeyHelp(),
+		help:       help.New(),
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
