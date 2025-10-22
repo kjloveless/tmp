@@ -23,14 +23,16 @@ import (
 
 type track struct {
 	ctrl     *beep.Ctrl
-	streamer beep.StreamSeeker
 	format   *beep.Format
 	title    string
 	length   time.Duration
 }
 
 func (t track) Position() time.Duration {
-	return t.format.SampleRate.D(t.streamer.Position())
+  if streamer, ok := t.ctrl.Streamer.(beep.StreamSeeker); ok {
+	  return t.format.SampleRate.D(streamer.Position())
+  }
+  panic("failure to retrieve position from track")
 }
 
 func (t track) Percent() float64 {
@@ -77,7 +79,6 @@ func (m *model) playSongCmd(path string) tea.Cmd {
 		ctrl := &beep.Ctrl{Streamer: streamer, Paused: false}
 		track := track{
 			ctrl:     ctrl,
-			streamer: streamer,
 			format:   &format,
 			title:    title,
 			length:   format.SampleRate.D(streamer.Len()),
@@ -161,12 +162,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickCmd()
 
 	case tickMsg:
-		if m.playing.streamer != nil && m.playing.Percent() >= 1.0 {
+		if m.playing.ctrl != nil && m.playing.Percent() >= 1.0 {
 			m.playing = track{}
 			m.pause = false
 			return m, nil
 		}
-		if m.playing.streamer == nil {
+		if m.playing.ctrl == nil {
 			return m, nil
 		}
 		return m, tickCmd()
