@@ -1,6 +1,5 @@
 package main
 
-
 import (
 	"fmt"
 	"log"
@@ -10,44 +9,51 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/filepicker"
-  "github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/kjloveless/tmp/internal/helpKey"
 
-  "github.com/gopxl/beep/v2"
+	"github.com/gopxl/beep/v2"
 	"github.com/gopxl/beep/v2/mp3"
 	"github.com/gopxl/beep/v2/speaker"
 )
 
 type track struct {
-  streamer  beep.StreamSeeker
-  format    *beep.Format
-  title     string
-  length    time.Duration
-}
-func (t track) Position() time.Duration {
-  return t.format.SampleRate.D(t.streamer.Position())
-}
-func (t track) Percent() float64 {
-  return t.Position().Round(time.Second).Seconds() / t.length.Round(time.Second).Seconds()
-}
-func (t track) String() string {
-  return fmt.Sprintf(
-    "%s : %s", 
-    t.Position().Round(time.Second), 
-    t.length.Round(time.Second))
+	ctrl     *beep.Ctrl
+	format   *beep.Format
+	title    string
+	length   time.Duration
 }
 
-type directoryReadMsg struct {
-	path    string
-	entries []os.DirEntry
+func (t track) Position() time.Duration {
+  if streamer, ok := t.ctrl.Streamer.(beep.StreamSeeker); ok {
+	  return t.format.SampleRate.D(streamer.Position())
+  }
+  panic("failure to retrieve position from track")
+}
+
+func (t track) Percent() float64 {
+	return t.Position().Round(time.Second).Seconds() / t.length.Round(time.Second).Seconds()
+}
+
+func (t track) String() string {
+	return fmt.Sprintf(
+		"%s : %s",
+		t.Position().Round(time.Second),
+		t.length.Round(time.Second))
 }
 
 type model struct {
-  playing     track
-  progress    progress.Model
-  filepicker  filepicker.Model
-  err         error
+	playing    track
+	pause      bool
+	progress   progress.Model
+	filepicker filepicker.Model
+	err        error
+	keys       helpKey.KeyMap
+	help       help.Model
 }
 
 type (
@@ -64,33 +70,34 @@ func (m *model) playSongCmd(path string) tea.Cmd {
 			log.Println("Error opening file:", err)
 			return nil
 		}
-    streamer, format, err := mp3.Decode(f)
+		streamer, format, err := mp3.Decode(f)
 		if err != nil {
 			log.Println("Error decoding file:", m.err)
 			return nil
 		}
 		title := filepath.Base(path)
-    track := track{
-      streamer: streamer, 
-      format: &format,
-      title: title,
-      length: format.SampleRate.D(streamer.Len()),
-    }
-
+		ctrl := &beep.Ctrl{Streamer: streamer, Paused: false}
+		track := track{
+			ctrl:     ctrl,
+			format:   &format,
+			title:    title,
+			length:   format.SampleRate.D(streamer.Len()),
+		}
+		speaker.Clear()
 		speaker.Init(
-      track.format.SampleRate, 
-      track.format.SampleRate.N(time.Second/10))
+			track.format.SampleRate,
+			track.format.SampleRate.N(time.Second/10))
 
-		speaker.Play(track.streamer)
+		speaker.Play(track.ctrl)
 
 		return track
 	}
 }
 
 func tickCmd() tea.Cmd {
-  return tea.Tick(time.Millisecond, func(t time.Time) tea.Msg {
-    return tickMsg(t)
-  })
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
 }
 
 func (m model) Init() tea.Cmd {
@@ -106,25 +113,39 @@ func (m model) View() string {
 	if m.err != nil {
 		builder.WriteString(statusStyle.Render(fmt.Sprintf("❌ Error: %v", m.err)))
 	} else if m.playing.title != "" {
-		builder.WriteString(statusStyle.Render(fmt.Sprintf("🎵 Now Playing: %s", m.playing.title)))
-    builder.WriteString(statusStyle.Render(
-      "\n" + 
-      m.progress.ViewAs(m.playing.Percent()) + 
-      " " +
-      m.playing.String()))
+		if m.pause {
+			builder.WriteString(statusStyle.Render(fmt.Sprintf("⏸  Paused: %s", m.playing.title)))
+		} else {
+			builder.WriteString(statusStyle.Render(fmt.Sprintf("🎵 Now Playing: %s", m.playing.title)))
+		}
+		builder.WriteString(statusStyle.Render(
+			"\n" +
+				m.progress.ViewAs(m.playing.Percent()) +
+				" " +
+				m.playing.String()))
 	} else {
 		builder.WriteString(statusStyle.Render("Select an MP3 file to play."))
 	}
-
+	helpView := m.help.View(m.keys)
+	builder.WriteString("\n" + helpView)
 	return builder.String()
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyEsc, tea.KeyCtrlC:
+		switch {
+		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
+		case key.Matches(msg, m.keys.PlayPause):
+			if m.playing.title == "" {
+				return m, nil
+			}
+			speaker.Lock()
+			m.playing.ctrl.Paused = !m.playing.ctrl.Paused
+			speaker.Unlock()
+			m.pause = m.playing.ctrl.Paused
+			return m, nil
 		}
 	case songPlayingMsg:
 		m.playing.title = string(msg)
@@ -135,15 +156,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg
 		return m, nil
 
-  case track:
-    m.playing = msg
-    return m, tickCmd()
+	case track:
+		m.playing = msg
+		m.pause = false
+		return m, tickCmd()
 
-  case tickMsg:
-    if m.playing.Percent() > 1.0 {
-      return m, tea.Quit
-    }
-    return m, tickCmd()
+	case tickMsg:
+		if m.playing.ctrl != nil && m.playing.Percent() >= 1.0 {
+			m.playing = track{}
+			m.pause = false
+			return m, nil
+		}
+		if m.playing.ctrl == nil {
+			return m, nil
+		}
+		return m, tickCmd()
+
 	}
 	var cmd tea.Cmd
 	m.filepicker, cmd = m.filepicker.Update(msg)
@@ -153,7 +181,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.playSongCmd(path)
 		}
 	}
-	m.playing.title = ""
 	return m, cmd
 }
 
@@ -168,13 +195,14 @@ func main() {
 	fp := filepicker.New()
 	fp.AllowedTypes = []string{".mp3"}
 	fp.CurrentDirectory = initPath
-
-  prog := progress.New(progress.WithScaledGradient("#ff7ccb", "#fdff8c"), progress.WithSpringOptions(6.0, .5))
-  prog.ShowPercentage = false
+	prog := progress.New(progress.WithScaledGradient("#ff7ccb", "#fdff8c"), progress.WithSpringOptions(6.0, .5))
+	prog.ShowPercentage = false
 
 	m := model{
 		filepicker: fp,
-    progress: prog,
+		progress:   prog,
+		keys:       helpKey.InitKeyHelp(),
+		help:       help.New(),
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
