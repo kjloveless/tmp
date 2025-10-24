@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/filepicker"
-	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
@@ -23,16 +22,14 @@ import (
 
 type track struct {
 	ctrl     *beep.Ctrl
+	streamer beep.StreamSeeker
 	format   *beep.Format
 	title    string
 	length   time.Duration
 }
 
 func (t track) Position() time.Duration {
-  if streamer, ok := t.ctrl.Streamer.(beep.StreamSeeker); ok {
-	  return t.format.SampleRate.D(streamer.Position())
-  }
-  panic("failure to retrieve position from track")
+	return t.format.SampleRate.D(t.streamer.Position())
 }
 
 func (t track) Percent() float64 {
@@ -52,8 +49,7 @@ type model struct {
 	progress   progress.Model
 	filepicker filepicker.Model
 	err        error
-	keys       helpKey.KeyMap
-	help       help.Model
+	help       helpKey.HelpUI
 }
 
 type (
@@ -79,6 +75,7 @@ func (m *model) playSongCmd(path string) tea.Cmd {
 		ctrl := &beep.Ctrl{Streamer: streamer, Paused: false}
 		track := track{
 			ctrl:     ctrl,
+			streamer: streamer,
 			format:   &format,
 			title:    title,
 			length:   format.SampleRate.D(streamer.Len()),
@@ -106,7 +103,12 @@ func (m model) Init() tea.Cmd {
 
 func (m model) View() string {
 	var builder strings.Builder
-
+	if m.help.GetshowHelp() {
+		var b strings.Builder
+		b.WriteString("Help — press ? or h to close\n\n")
+		b.WriteString(m.help.ListView())
+		return b.String()
+	}
 	builder.WriteString(m.filepicker.View())
 	builder.WriteString("\n")
 	statusStyle := lipgloss.NewStyle().Padding(0, 1)
@@ -126,7 +128,7 @@ func (m model) View() string {
 	} else {
 		builder.WriteString(statusStyle.Render("Select an MP3 file to play."))
 	}
-	helpView := m.help.View(m.keys)
+	helpView := m.help.View()
 	builder.WriteString("\n" + helpView)
 	return builder.String()
 }
@@ -135,9 +137,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch {
-		case key.Matches(msg, m.keys.Quit):
+
+		case key.Matches(msg, m.help.Keys().Quit):
 			return m, tea.Quit
-		case key.Matches(msg, m.keys.PlayPause):
+		case key.Matches(msg, m.help.Keys().PlayPause):
 			if m.playing.title == "" {
 				return m, nil
 			}
@@ -146,14 +149,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			speaker.Unlock()
 			m.pause = m.playing.ctrl.Paused
 			return m, nil
+
+		case key.Matches(msg, m.help.Keys().KeyHelp):
+			if m.help.GetshowHelp() {
+				m.help.ToggleShowHelp()
+				return m, tea.EnterAltScreen
+			}
+			m.help.ToggleShowHelp()
+			return m, tea.ExitAltScreen
+
 		}
 	case songPlayingMsg:
 		m.playing.title = string(msg)
 		m.err = nil
-		return m, nil
-
-	case errorMsg:
-		m.err = msg
 		return m, nil
 
 	case track:
@@ -162,12 +170,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickCmd()
 
 	case tickMsg:
-		if m.playing.ctrl != nil && m.playing.Percent() >= 1.0 {
+		if m.playing.streamer != nil && m.playing.Percent() >= 1.0 {
 			m.playing = track{}
 			m.pause = false
 			return m, nil
 		}
-		if m.playing.ctrl == nil {
+		if m.playing.streamer == nil {
 			return m, nil
 		}
 		return m, tickCmd()
@@ -201,11 +209,10 @@ func main() {
 	m := model{
 		filepicker: fp,
 		progress:   prog,
-		keys:       helpKey.InitKeyHelp(),
-		help:       help.New(),
+		help:       helpKey.NewDefault(),
 	}
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
 		panic(err)
 	}
