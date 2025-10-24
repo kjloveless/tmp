@@ -105,7 +105,7 @@ func (m model) View() string {
 	var builder strings.Builder
 	if m.help.GetshowHelp() {
 		var b strings.Builder
-		b.WriteString("Help — press ? or h to close\n\n")
+		b.WriteString("Help — press ? to close\n\n")
 		b.WriteString(m.help.ListView())
 		return b.String()
 	}
