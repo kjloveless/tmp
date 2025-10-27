@@ -152,12 +152,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case key.Matches(msg, m.help.Keys().KeyHelp):
-			if m.help.GetshowHelp() {
-				m.help.ToggleShowHelp()
-				return m, tea.EnterAltScreen
-			}
 			m.help.ToggleShowHelp()
-			return m, tea.ExitAltScreen
+			return m, nil
 
 		}
 	case songPlayingMsg:
@@ -217,7 +213,7 @@ func main() {
 		help:       helpKey.NewDefault(),
 	}
 
-	p := tea.NewProgram(m)
+	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		panic(err)
 	}
