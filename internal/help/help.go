@@ -1,4 +1,4 @@
-package helpKey
+package help
 
 import (
 	"strings"

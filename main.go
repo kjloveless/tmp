@@ -13,7 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/kjloveless/tmp/internal/helpKey"
+	"github.com/kjloveless/tmp/internal/help"
 
 	"github.com/gopxl/beep/v2"
 	"github.com/gopxl/beep/v2/mp3"
@@ -51,7 +51,7 @@ type model struct {
 	progress   progress.Model
 	filepicker filepicker.Model
 	err        error
-	help       helpKey.HelpUI
+	help       help.HelpUI
 }
 
 type (
@@ -210,7 +210,7 @@ func main() {
 	m := model{
 		filepicker: fp,
 		progress:   prog,
-		help:       helpKey.NewDefault(),
+		help:       help.NewDefault(),
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
