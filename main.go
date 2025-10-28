@@ -28,14 +28,18 @@ type track struct {
 }
 
 func (t track) Position() time.Duration {
+  speaker.Lock()
 	if streamer, ok := t.ctrl.Streamer.(beep.StreamSeeker); ok {
-		return t.format.SampleRate.D(streamer.Position())
+    duration := t.format.SampleRate.D(streamer.Position())
+		speaker.Unlock()
+    return duration
 	}
+  speaker.Unlock()
 	panic("failure to retrieve position from track")
 }
 
 func (t track) Percent() float64 {
-	return t.Position().Round(time.Second).Seconds() / t.length.Round(time.Second).Seconds()
+	return t.Position().Seconds() / t.length.Seconds()
 }
 
 func (t track) String() string {
@@ -75,11 +79,14 @@ func (m *model) playSongCmd(path string) tea.Cmd {
 		}
 		title := filepath.Base(path)
 		ctrl := &beep.Ctrl{Streamer: streamer, Paused: false}
+    speaker.Lock()
+    length := format.SampleRate.D(streamer.Len())
+    speaker.Unlock()
 		track := track{
 			ctrl:   ctrl,
 			format: &format,
 			title:  title,
-			length: format.SampleRate.D(streamer.Len()),
+			length: length,
 		}
 		speaker.Clear()
 		speaker.Init(
@@ -93,7 +100,7 @@ func (m *model) playSongCmd(path string) tea.Cmd {
 }
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(time.Second/100, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
@@ -172,7 +179,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		if m.playing.ctrl != nil && m.playing.Percent() >= 1.0 {
-			m.playing = track{}
 			m.pause = false
 			return m, nil
 		}
