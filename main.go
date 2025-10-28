@@ -10,7 +10,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/filepicker"
 	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/kjloveless/tmp/internal/help"
@@ -22,11 +21,10 @@ import (
 )
 
 type model struct {
-	playing    track.Track
-	progress   progress.Model
-	filepicker filepicker.Model
-	err        error
-	help       help.HelpUI
+	playing     track.Track
+	filepicker  filepicker.Model
+	help        help.HelpUI
+  err         error
 }
 
 type (
@@ -45,20 +43,14 @@ func (m *model) playSongCmd(path string) tea.Cmd {
 		}
 		streamer, format, err := mp3.Decode(f)
 		if err != nil {
-			log.Println("Error decoding file:", m.err)
+			log.Println("Error decoding file:", err)
 			return nil
 		}
 		title := filepath.Base(path)
 		ctrl := &beep.Ctrl{Streamer: streamer, Paused: false}
-    speaker.Lock()
     length := format.SampleRate.D(streamer.Len())
-    speaker.Unlock()
-		track := track.Track{
-			Ctrl:   ctrl,
-			Format: &format,
-			Title:  title,
-			Length: length,
-		}
+		track := track.New(ctrl, &format, title, length)
+
 		speaker.Clear()
 		speaker.Init(
 			track.Format.SampleRate,
@@ -102,8 +94,6 @@ func (m model) View() string {
 		}
 		builder.WriteString(statusStyle.Render(
 			"\n" +
-				m.progress.ViewAs(m.playing.Percent()) +
-				" " +
 				m.playing.String()))
 	} else {
 		builder.WriteString(statusStyle.Render("Select an MP3 file to play."))
@@ -180,12 +170,9 @@ func main() {
 	fp := filepicker.New()
 	fp.AllowedTypes = []string{".mp3"}
 	fp.CurrentDirectory = initPath
-	prog := progress.New(progress.WithScaledGradient("#ff7ccb", "#fdff8c"), progress.WithSpringOptions(6.0, .5))
-	prog.ShowPercentage = false
 
 	m := model{
 		filepicker: fp,
-		progress:   prog,
 		help:       help.NewDefault(),
 	}
 
