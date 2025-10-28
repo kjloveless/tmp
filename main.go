@@ -14,43 +14,15 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/kjloveless/tmp/internal/help"
+	"github.com/kjloveless/tmp/internal/track"
 
 	"github.com/gopxl/beep/v2"
 	"github.com/gopxl/beep/v2/mp3"
 	"github.com/gopxl/beep/v2/speaker"
 )
 
-type track struct {
-	ctrl   *beep.Ctrl
-	format *beep.Format
-	title  string
-	length time.Duration
-}
-
-func (t track) Position() time.Duration {
-  speaker.Lock()
-	if streamer, ok := t.ctrl.Streamer.(beep.StreamSeeker); ok {
-    duration := t.format.SampleRate.D(streamer.Position())
-		speaker.Unlock()
-    return duration
-	}
-  speaker.Unlock()
-	panic("failure to retrieve position from track")
-}
-
-func (t track) Percent() float64 {
-	return t.Position().Seconds() / t.length.Seconds()
-}
-
-func (t track) String() string {
-	return fmt.Sprintf(
-		"%s : %s",
-		t.Position().Round(time.Second),
-		t.length.Round(time.Second))
-}
-
 type model struct {
-	playing    track
+	playing    track.Track
 	progress   progress.Model
 	filepicker filepicker.Model
 	err        error
@@ -81,18 +53,18 @@ func (m *model) playSongCmd(path string) tea.Cmd {
     speaker.Lock()
     length := format.SampleRate.D(streamer.Len())
     speaker.Unlock()
-		track := track{
-			ctrl:   ctrl,
-			format: &format,
-			title:  title,
-			length: length,
+		track := track.Track{
+			Ctrl:   ctrl,
+			Format: &format,
+			Title:  title,
+			Length: length,
 		}
 		speaker.Clear()
 		speaker.Init(
-			track.format.SampleRate,
-			track.format.SampleRate.N(time.Second/10))
+			track.Format.SampleRate,
+			track.Format.SampleRate.N(time.Second/10))
 
-		speaker.Play(track.ctrl)
+		speaker.Play(track.Ctrl)
 
 		return track
 	}
@@ -122,11 +94,11 @@ func (m model) View() string {
 	statusStyle := lipgloss.NewStyle().Padding(0, 1)
 	if m.err != nil {
 		builder.WriteString(statusStyle.Render(fmt.Sprintf("❌ Error: %v", m.err)))
-	} else if m.playing.title != "" {
-		if m.playing.ctrl.Paused {
-			builder.WriteString(statusStyle.Render(fmt.Sprintf("⏸  Paused: %s", m.playing.title)))
+	} else if m.playing.Title != "" {
+		if m.playing.Ctrl.Paused {
+			builder.WriteString(statusStyle.Render(fmt.Sprintf("⏸  Paused: %s", m.playing.Title)))
 		} else {
-			builder.WriteString(statusStyle.Render(fmt.Sprintf("🎵 Now Playing: %s", m.playing.title)))
+			builder.WriteString(statusStyle.Render(fmt.Sprintf("🎵 Now Playing: %s", m.playing.Title)))
 		}
 		builder.WriteString(statusStyle.Render(
 			"\n" +
@@ -148,11 +120,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.help.Keys().Quit):
 			return m, tea.Quit
 		case key.Matches(msg, m.help.Keys().PlayPause):
-			if m.playing.title == "" {
+			if m.playing.Title == "" {
 				return m, nil
 			}
 			speaker.Lock()
-			m.playing.ctrl.Paused = !m.playing.ctrl.Paused
+			m.playing.Ctrl.Paused = !m.playing.Ctrl.Paused
 			speaker.Unlock()
 			return m, nil
 
@@ -162,7 +134,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		}
 	case songPlayingMsg:
-		m.playing.title = string(msg)
+		m.playing.Title = string(msg)
 		m.err = nil
 		return m, nil
 
@@ -170,17 +142,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg
 		return m, nil
 
-	case track:
+	case track.Track:
 		m.playing = msg
-		m.playing.ctrl.Paused = false
+		m.playing.Ctrl.Paused = false
 		return m, tickCmd()
 
 	case tickMsg:
-		if m.playing.ctrl != nil && m.playing.Percent() >= 1.0 {
-			m.playing.ctrl.Paused = false
+		if m.playing.Ctrl != nil && m.playing.Percent() >= 1.0 {
+			m.playing.Ctrl.Paused = false
 			return m, nil
 		}
-		if m.playing.ctrl == nil {
+		if m.playing.Ctrl == nil {
 			return m, nil
 		}
 		return m, tickCmd()
