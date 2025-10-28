@@ -51,7 +51,6 @@ func (t track) String() string {
 
 type model struct {
 	playing    track
-	pause      bool
 	progress   progress.Model
 	filepicker filepicker.Model
 	err        error
@@ -124,7 +123,7 @@ func (m model) View() string {
 	if m.err != nil {
 		builder.WriteString(statusStyle.Render(fmt.Sprintf("❌ Error: %v", m.err)))
 	} else if m.playing.title != "" {
-		if m.pause {
+		if m.playing.ctrl.Paused {
 			builder.WriteString(statusStyle.Render(fmt.Sprintf("⏸  Paused: %s", m.playing.title)))
 		} else {
 			builder.WriteString(statusStyle.Render(fmt.Sprintf("🎵 Now Playing: %s", m.playing.title)))
@@ -155,7 +154,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			speaker.Lock()
 			m.playing.ctrl.Paused = !m.playing.ctrl.Paused
 			speaker.Unlock()
-			m.pause = m.playing.ctrl.Paused
 			return m, nil
 
 		case key.Matches(msg, m.help.Keys().KeyHelp):
@@ -174,12 +172,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case track:
 		m.playing = msg
-		m.pause = false
+		m.playing.ctrl.Paused = false
 		return m, tickCmd()
 
 	case tickMsg:
 		if m.playing.ctrl != nil && m.playing.Percent() >= 1.0 {
-			m.pause = false
+			m.playing.ctrl.Paused = false
 			return m, nil
 		}
 		if m.playing.ctrl == nil {
