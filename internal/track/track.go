@@ -4,6 +4,8 @@ import (
   "fmt"
   "time"
 
+  "github.com/kjloveless/tmp/internal/control"
+
   "github.com/gopxl/beep/v2"
   "github.com/gopxl/beep/v2/speaker"
 
@@ -11,7 +13,7 @@ import (
 )
 
 type Track struct {
-	Ctrl      *beep.Ctrl
+	Control   control.Control
 	Format    *beep.Format
   Title     string
   length    time.Duration
@@ -20,7 +22,7 @@ type Track struct {
 
 func (t Track) Position() time.Duration {
   speaker.Lock()
-	if streamer, ok := t.Ctrl.Streamer.(beep.StreamSeeker); ok {
+	if streamer, ok := t.Control.Streamer.(beep.StreamSeeker); ok {
     duration := t.Format.SampleRate.D(streamer.Position())
 		speaker.Unlock()
     return duration
@@ -42,7 +44,7 @@ func (t Track) String() string {
 }
 
 func New(
-  ctrl *beep.Ctrl, 
+  streamer beep.StreamSeeker, 
   format *beep.Format, 
   title string, 
   length time.Duration,
@@ -50,8 +52,9 @@ func New(
 	prog := progress.New(progress.WithScaledGradient("#ff7ccb", "#fdff8c"), progress.WithSpringOptions(6.0, .5))
 	prog.ShowPercentage = false
 
+	control := control.New(&beep.Ctrl{Streamer: streamer, Paused: false})
   return Track{
-    Ctrl: ctrl,
+    Control: control,
     Format: format,
     Title: title,
     length: length,

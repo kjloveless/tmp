@@ -15,7 +15,6 @@ import (
 	"github.com/kjloveless/tmp/internal/help"
 	"github.com/kjloveless/tmp/internal/track"
 
-	"github.com/gopxl/beep/v2"
 	"github.com/gopxl/beep/v2/mp3"
 	"github.com/gopxl/beep/v2/speaker"
 )
@@ -47,16 +46,15 @@ func (m *model) playSongCmd(path string) tea.Cmd {
 			return nil
 		}
 		title := filepath.Base(path)
-		ctrl := &beep.Ctrl{Streamer: streamer, Paused: false}
     length := format.SampleRate.D(streamer.Len())
-		track := track.New(ctrl, &format, title, length)
+		track := track.New(streamer, &format, title, length)
 
 		speaker.Clear()
 		speaker.Init(
 			track.Format.SampleRate,
 			track.Format.SampleRate.N(time.Second/10))
 
-		speaker.Play(track.Ctrl)
+		speaker.Play(track.Control)
 
 		return track
 	}
@@ -87,7 +85,7 @@ func (m model) View() string {
 	if m.err != nil {
 		builder.WriteString(statusStyle.Render(fmt.Sprintf("❌ Error: %v", m.err)))
 	} else if m.playing.Title != "" {
-		if m.playing.Ctrl.Paused {
+		if m.playing.Control.Paused {
 			builder.WriteString(statusStyle.Render(fmt.Sprintf("⏸  Paused: %s", m.playing.Title)))
 		} else {
 			builder.WriteString(statusStyle.Render(fmt.Sprintf("🎵 Now Playing: %s", m.playing.Title)))
@@ -114,7 +112,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			speaker.Lock()
-			m.playing.Ctrl.Paused = !m.playing.Ctrl.Paused
+			m.playing.Control.Paused = !m.playing.Control.Paused
 			speaker.Unlock()
 			return m, nil
 
@@ -134,15 +132,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case track.Track:
 		m.playing = msg
-		m.playing.Ctrl.Paused = false
+		m.playing.Control.Paused = false
 		return m, tickCmd()
 
 	case tickMsg:
-		if m.playing.Ctrl != nil && m.playing.Percent() >= 1.0 {
-			m.playing.Ctrl.Paused = false
+		if m.playing.Control.Ctrl != nil && m.playing.Percent() >= 1.0 {
+			m.playing.Control.Paused = false
 			return m, nil
 		}
-		if m.playing.Ctrl == nil {
+		if m.playing.Control.Ctrl == nil {
 			return m, nil
 		}
 		return m, tickCmd()
