@@ -23,6 +23,7 @@ import (
 type model struct {
 	playing     track.Track
 	filepicker  filepicker.Model
+  sampleRate  beep.SampleRate
 	help        help.HelpUI
   err         error
 }
@@ -50,7 +51,7 @@ func (m *model) playSongCmd(path string) tea.Cmd {
     length := format.SampleRate.D(streamer.Len())
 		track := track.New(streamer, &format, title, length)
 
-    resample := beep.Resample(4, format.SampleRate, 48000, track.Control.Streamer)
+    resample := beep.Resample(4, format.SampleRate, m.sampleRate, track.Control.Streamer)
 		speaker.Clear()
 		speaker.Play(resample)
 
@@ -167,12 +168,15 @@ func main() {
 	fp.AllowedTypes = []string{".mp3"}
 	fp.CurrentDirectory = initPath
 
+  var sr beep.SampleRate = 48000
+
 	m := model{
 		filepicker: fp,
+    sampleRate: sr,
 		help:       help.NewDefault(),
 	}
 
-	speaker.Init(48000, 8000)
+	speaker.Init(m.sampleRate, m.sampleRate.N(time.Second/10))
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
