@@ -114,6 +114,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			speaker.Unlock()
 			return m, nil
 
+    case key.Matches(msg, m.help.Keys().Loop):
+      m.playing.Control.Loop = !m.playing.Control.Loop
+      count := 1
+      if m.playing.Control.Loop {
+        count = -1
+      }
+      loop := beep.Loop(count, m.playing.Control.Streamer.(beep.StreamSeeker))
+      speaker.Play(loop)
+
+
 		case key.Matches(msg, m.help.Keys().KeyHelp):
 			m.help.ToggleShowHelp()
 			return m, nil

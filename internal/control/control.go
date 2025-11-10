@@ -6,12 +6,12 @@ import (
 
 type Control struct {
   *beep.Ctrl
-  loop bool
+  Loop bool
 }
 
 func New(ctrl *beep.Ctrl) Control {
   return Control{
     Ctrl: ctrl,
-    loop: false,
+    Loop: false,
   }
 }

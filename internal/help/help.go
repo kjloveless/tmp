@@ -13,6 +13,10 @@ var DefaultKeyMap = KeyMap{
 		key.WithKeys("p"),
 		key.WithHelp("p", "resume/pause"),
 	),
+  Loop: key.NewBinding(
+    key.WithKeys("l"),
+    key.WithHelp("l", "loop"),
+  ),
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),
 		key.WithHelp("q/ctrl+c", "quit"),
@@ -117,6 +121,7 @@ func (hu HelpUI) Keys() KeyMap {
 
 type KeyMap struct {
 	PlayPause key.Binding
+  Loop      key.Binding
 	Quit      key.Binding
 	KeyHelp   key.Binding
 }
@@ -146,12 +151,13 @@ func NewDefault() HelpUI {
 }
 
 func (k KeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.PlayPause, k.Quit, k.KeyHelp}
+	return []key.Binding{k.PlayPause, k.Loop, k.Quit, k.KeyHelp}
 }
 
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.PlayPause},
+    {k.Loop},
 		{k.Quit},
 		{k.KeyHelp},
 	}
