@@ -15,6 +15,7 @@ import (
 	"github.com/kjloveless/tmp/internal/help"
 	"github.com/kjloveless/tmp/internal/track"
 
+  "github.com/gopxl/beep/v2"
 	"github.com/gopxl/beep/v2/mp3"
 	"github.com/gopxl/beep/v2/speaker"
 )
@@ -49,12 +50,9 @@ func (m *model) playSongCmd(path string) tea.Cmd {
     length := format.SampleRate.D(streamer.Len())
 		track := track.New(streamer, &format, title, length)
 
+    resample := beep.Resample(4, format.SampleRate, 48000, track.Control.Streamer)
 		speaker.Clear()
-		speaker.Init(
-			track.Format.SampleRate,
-			track.Format.SampleRate.N(time.Second/10))
-
-		speaker.Play(track.Control)
+		speaker.Play(resample)
 
 		return track
 	}
@@ -173,6 +171,8 @@ func main() {
 		filepicker: fp,
 		help:       help.NewDefault(),
 	}
+
+	speaker.Init(48000, 8000)
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
