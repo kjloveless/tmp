@@ -1,5 +1,4 @@
-### [WIP] tmp (terminal music player)
-
+### [WIP] tmp (terminal music player)  
 
 to run, execute: `go run ./cmd/player`
 ---
