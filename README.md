@@ -1,5 +1,5 @@
-### tmp (terminal music player) [WIP]
-
-nothing is forever, everything is tmp
+### [WIP] tmp (terminal music player)
 
 to run, execute: `go run ./cmd/player`
+---
+nothing is forever, everything is tmp
