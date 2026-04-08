@@ -15,17 +15,18 @@ import (
 	"github.com/kjloveless/tmp/internal/help"
 	"github.com/kjloveless/tmp/internal/track"
 
-  "github.com/gopxl/beep/v2"
+	"github.com/gopxl/beep/v2"
 	"github.com/gopxl/beep/v2/mp3"
 	"github.com/gopxl/beep/v2/speaker"
 )
 
 type model struct {
-	playing     track.Track
-	filepicker  filepicker.Model
-  sampleRate  beep.SampleRate
-	help        help.HelpUI
-  err         error
+	playing          track.Track
+	filepicker       filepicker.Model
+	sampleRate       beep.SampleRate
+	help             help.HelpUI
+	loadingDirectory bool
+	err              error
 }
 
 type (
@@ -34,6 +35,28 @@ type (
 )
 
 type tickMsg time.Time
+type dirLoadedMsg struct{}
+
+func (m *model) updatePlaybackLoop() error {
+	if m.playing.Control.Ctrl == nil || m.playing.Control.Source == nil {
+		return nil
+	}
+
+	streamer := beep.Streamer(m.playing.Control.Source)
+	if m.playing.Control.Loop {
+		looped, err := beep.Loop2(m.playing.Control.Source)
+		if err != nil {
+			return err
+		}
+		streamer = looped
+	}
+
+	speaker.Lock()
+	m.playing.Control.Streamer = streamer
+	speaker.Unlock()
+
+	return nil
+}
 
 func (m *model) playSongCmd(path string) tea.Cmd {
 	return func() tea.Msg {
@@ -48,10 +71,10 @@ func (m *model) playSongCmd(path string) tea.Cmd {
 			return nil
 		}
 		title := filepath.Base(path)
-    length := format.SampleRate.D(streamer.Len())
+		length := format.SampleRate.D(streamer.Len())
 		track := track.New(streamer, &format, title, length)
 
-    resample := beep.Resample(4, format.SampleRate, m.sampleRate, track.Control.Streamer)
+		resample := beep.Resample(4, format.SampleRate, m.sampleRate, track.Control.Ctrl)
 		speaker.Clear()
 		speaker.Play(resample)
 
@@ -84,11 +107,14 @@ func (m model) View() string {
 	if m.err != nil {
 		builder.WriteString(statusStyle.Render(fmt.Sprintf("❌ Error: %v", m.err)))
 	} else if m.playing.Title != "" {
+		statusText := fmt.Sprintf("🎵 Now Playing: %s", m.playing.Title)
 		if m.playing.Control.Paused {
-			builder.WriteString(statusStyle.Render(fmt.Sprintf("⏸  Paused: %s", m.playing.Title)))
-		} else {
-			builder.WriteString(statusStyle.Render(fmt.Sprintf("🎵 Now Playing: %s", m.playing.Title)))
+			statusText = fmt.Sprintf("⏸  Paused: %s", m.playing.Title)
 		}
+		if m.playing.Control.Loop {
+			statusText += "  🔁 Loop On"
+		}
+		builder.WriteString(statusStyle.Render(statusText))
 		builder.WriteString(statusStyle.Render(
 			"\n" +
 				m.playing.String()))
@@ -107,12 +133,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.help.Keys().Quit):
 			return m, tea.Quit
 		case key.Matches(msg, m.help.Keys().PlayPause):
-			if m.playing.Title == "" {
+			if m.playing.Control.Ctrl == nil {
 				return m, nil
 			}
 			speaker.Lock()
 			m.playing.Control.Paused = !m.playing.Control.Paused
 			speaker.Unlock()
+			return m, nil
+
+		case key.Matches(msg, m.help.Keys().Loop):
+			if m.playing.Control.Ctrl == nil {
+				return m, nil
+			}
+
+			m.playing.Control.Loop = !m.playing.Control.Loop
+			if err := m.updatePlaybackLoop(); err != nil {
+				m.playing.Control.Loop = !m.playing.Control.Loop
+				m.err = err
+				return m, nil
+			}
+
+			m.err = nil
 			return m, nil
 
 		case key.Matches(msg, m.help.Keys().KeyHelp):
@@ -129,24 +170,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg
 		return m, nil
 
+	case dirLoadedMsg:
+		m.loadingDirectory = false
+		return m, nil
+
 	case track.Track:
 		m.playing = msg
 		m.playing.Control.Paused = false
 		return m, tickCmd()
 
 	case tickMsg:
-		if m.playing.Control.Ctrl != nil && m.playing.Percent() >= 1.0 {
-			m.playing.Control.Paused = false
+		if m.playing.Control.Ctrl == nil || m.playing.Control.Source == nil {
 			return m, nil
 		}
-		if m.playing.Control.Ctrl == nil {
+		if !m.playing.Control.Loop && m.playing.Percent() >= 1.0 {
+			m.playing.Control.Paused = false
 			return m, nil
 		}
 		return m, tickCmd()
 
 	}
+
+	if keyMsg, ok := msg.(tea.KeyMsg); ok && m.loadingDirectory {
+		if key.Matches(keyMsg, m.filepicker.KeyMap.Open) ||
+			key.Matches(keyMsg, m.filepicker.KeyMap.Select) ||
+			key.Matches(keyMsg, m.filepicker.KeyMap.Back) {
+			return m, nil
+		}
+	}
+
+	prevDir := m.filepicker.CurrentDirectory
 	var cmd tea.Cmd
 	m.filepicker, cmd = m.filepicker.Update(msg)
+	if m.filepicker.CurrentDirectory != prevDir && cmd != nil {
+		m.loadingDirectory = true
+		cmd = tea.Sequence(cmd, func() tea.Msg { return dirLoadedMsg{} })
+	}
 
 	if didSelect, path := m.filepicker.DidSelectFile(msg); didSelect {
 		if strings.HasSuffix(strings.ToLower(path), ".mp3") {
@@ -168,11 +227,11 @@ func main() {
 	fp.AllowedTypes = []string{".mp3"}
 	fp.CurrentDirectory = initPath
 
-  var sr beep.SampleRate = 48000
+	var sr beep.SampleRate = 48000
 
 	m := model{
 		filepicker: fp,
-    sampleRate: sr,
+		sampleRate: sr,
 		help:       help.NewDefault(),
 	}
 

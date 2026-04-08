@@ -1,17 +1,19 @@
 package control
 
 import (
-  "github.com/gopxl/beep/v2"
+	"github.com/gopxl/beep/v2"
 )
 
 type Control struct {
-  *beep.Ctrl
-  loop bool
+	*beep.Ctrl
+	Source beep.StreamSeeker
+	Loop   bool
 }
 
-func New(ctrl *beep.Ctrl) Control {
-  return Control{
-    Ctrl: ctrl,
-    loop: false,
-  }
+func New(source beep.StreamSeeker) Control {
+	return Control{
+		Ctrl:   &beep.Ctrl{Streamer: source, Paused: false},
+		Source: source,
+		Loop:   false,
+	}
 }
