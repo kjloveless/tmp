@@ -30,8 +30,11 @@ type model struct {
 }
 
 type (
-	songPlayingMsg string
 	errorMsg       error
+	loadedTrackMsg struct {
+		track    track.Track
+		previous beep.StreamSeekCloser
+	}
 )
 
 type tickMsg time.Time
@@ -59,27 +62,36 @@ func (m *model) updatePlaybackLoop() error {
 }
 
 func (m *model) playSongCmd(path string) tea.Cmd {
+	previous := m.playing.Control.Source
+
 	return func() tea.Msg {
 		f, err := os.Open(path)
 		if err != nil {
-			log.Println("Error opening file:", err)
-			return nil
+			return errorMsg(fmt.Errorf("open %s: %w", filepath.Base(path), err))
 		}
 		streamer, format, err := mp3.Decode(f)
 		if err != nil {
-			log.Println("Error decoding file:", err)
-			return nil
+			_ = f.Close()
+			return errorMsg(fmt.Errorf("decode %s: %w", filepath.Base(path), err))
 		}
 		title := filepath.Base(path)
 		length := format.SampleRate.D(streamer.Len())
-		track := track.New(streamer, &format, title, length)
-
-		resample := beep.Resample(4, format.SampleRate, m.sampleRate, track.Control.Ctrl)
-		speaker.Clear()
-		speaker.Play(resample)
-
-		return track
+		return loadedTrackMsg{
+			track:    track.New(streamer, &format, title, length),
+			previous: previous,
+		}
 	}
+}
+
+func (m *model) stopPlayback() error {
+	if m.playing.Control.Source == nil {
+		return nil
+	}
+
+	speaker.Clear()
+	err := m.playing.Control.Source.Close()
+	m.playing = track.Track{}
+	return err
 }
 
 func tickCmd() tea.Cmd {
@@ -131,6 +143,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, m.help.Keys().Quit):
+			if err := m.stopPlayback(); err != nil {
+				log.Printf("error closing active track: %v", err)
+			}
 			return m, tea.Quit
 		case key.Matches(msg, m.help.Keys().PlayPause):
 			if m.playing.Control.Ctrl == nil {
@@ -161,11 +176,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		}
-	case songPlayingMsg:
-		m.playing.Title = string(msg)
-		m.err = nil
-		return m, nil
-
 	case errorMsg:
 		m.err = msg
 		return m, nil
@@ -174,9 +184,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loadingDirectory = false
 		return m, nil
 
-	case track.Track:
-		m.playing = msg
+	case loadedTrackMsg:
+		speaker.Clear()
+		if msg.previous != nil {
+			if err := msg.previous.Close(); err != nil {
+				log.Printf("error closing previous track: %v", err)
+			}
+		}
+
+		m.playing = msg.track
 		m.playing.Control.Paused = false
+		m.err = nil
+
+		resample := beep.Resample(4, m.playing.Format.SampleRate, m.sampleRate, m.playing.Control.Ctrl)
+		speaker.Play(resample)
+
 		return m, tickCmd()
 
 	case tickMsg:
