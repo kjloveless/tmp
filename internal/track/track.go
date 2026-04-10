@@ -44,7 +44,7 @@ func (t Track) String() string {
 }
 
 func New(
-	streamer beep.StreamSeeker,
+	streamer beep.StreamSeekCloser,
 	format *beep.Format,
 	title string,
 	length time.Duration,
