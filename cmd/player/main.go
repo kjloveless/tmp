@@ -104,14 +104,16 @@ func (m model) Init() tea.Cmd {
 	return m.filepicker.Init()
 }
 
-func (m model) View() string {
+func (m model) View() tea.View {
 	var builder strings.Builder
 
 	if m.help.GetshowHelp() {
 		var b strings.Builder
 		b.WriteString("Help — press ? to close\n\n")
 		b.WriteString(m.help.ListView())
-		return b.String()
+		v := tea.NewView(b.String())
+		v.AltScreen = true
+		return v
 	}
 	builder.WriteString(m.filepicker.View())
 	builder.WriteString("\n")
@@ -135,7 +137,9 @@ func (m model) View() string {
 	}
 	helpView := m.help.View()
 	builder.WriteString("\n" + helpView)
-	return builder.String()
+	v := tea.NewView(builder.String())
+	v.AltScreen = true
+	return v
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -259,7 +263,7 @@ func main() {
 
 	speaker.Init(m.sampleRate, m.sampleRate.N(time.Second/10))
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
 		panic(err)
 	}
