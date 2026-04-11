@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/filepicker"
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/filepicker"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/kjloveless/tmp/internal/help"
 	"github.com/kjloveless/tmp/internal/track"
 
@@ -140,7 +140,7 @@ func (m model) View() string {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(msg, m.help.Keys().Quit):
 			if err := m.stopPlayback(); err != nil {
@@ -213,7 +213,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	}
 
-	if keyMsg, ok := msg.(tea.KeyMsg); ok && m.loadingDirectory {
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && m.loadingDirectory {
 		if key.Matches(keyMsg, m.filepicker.KeyMap.Open) ||
 			key.Matches(keyMsg, m.filepicker.KeyMap.Select) ||
 			key.Matches(keyMsg, m.filepicker.KeyMap.Back) {

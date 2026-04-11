@@ -3,9 +3,9 @@ package help
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/lipgloss/v2"
 )
 
 var DefaultKeyMap = KeyMap{
@@ -13,10 +13,10 @@ var DefaultKeyMap = KeyMap{
 		key.WithKeys("p"),
 		key.WithHelp("p", "resume/pause"),
 	),
-  Loop: key.NewBinding(
-    key.WithKeys("l"),
-    key.WithHelp("l", "loop"),
-  ),
+	Loop: key.NewBinding(
+		key.WithKeys("l"),
+		key.WithHelp("l", "loop"),
+	),
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),
 		key.WithHelp("q/ctrl+c", "quit"),
@@ -81,7 +81,7 @@ func (hu HelpUI) ListView() string {
 		return ""
 	}
 
-	w := hu.model.Width
+	w := hu.model.Width()
 	if w <= 0 {
 		w = 80
 	}
@@ -121,7 +121,7 @@ func (hu HelpUI) Keys() KeyMap {
 
 type KeyMap struct {
 	PlayPause key.Binding
-  Loop      key.Binding
+	Loop      key.Binding
 	Quit      key.Binding
 	KeyHelp   key.Binding
 }
@@ -157,7 +157,7 @@ func (k KeyMap) ShortHelp() []key.Binding {
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.PlayPause},
-    {k.Loop},
+		{k.Loop},
 		{k.Quit},
 		{k.KeyHelp},
 	}
