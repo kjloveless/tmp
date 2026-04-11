@@ -22,6 +22,8 @@ import (
 
 type model struct {
 	playing          track.Track
+	playingPath      string
+	queue            []queuedTrack
 	filepicker       filepicker.Model
 	sampleRate       beep.SampleRate
 	help             help.HelpUI
@@ -29,10 +31,16 @@ type model struct {
 	err              error
 }
 
+type queuedTrack struct {
+	path  string
+	title string
+}
+
 type (
 	errorMsg       error
 	loadedTrackMsg struct {
 		track    track.Track
+		path     string
 		previous beep.StreamSeekCloser
 	}
 )
@@ -78,6 +86,7 @@ func (m *model) playSongCmd(path string) tea.Cmd {
 		length := format.SampleRate.D(streamer.Len())
 		return loadedTrackMsg{
 			track:    track.New(streamer, &format, title, length),
+			path:     path,
 			previous: previous,
 		}
 	}
@@ -91,7 +100,48 @@ func (m *model) stopPlayback() error {
 	speaker.Clear()
 	err := m.playing.Control.Source.Close()
 	m.playing = track.Track{}
+	m.playingPath = ""
 	return err
+}
+
+func (m *model) enqueueCurrent() {
+	if m.playing.Title == "" || m.playingPath == "" {
+		return
+	}
+
+	m.queue = append(m.queue, queuedTrack{
+		path:  m.playingPath,
+		title: m.playing.Title,
+	})
+}
+
+func (m *model) dequeueNext() (queuedTrack, bool) {
+	if len(m.queue) == 0 {
+		return queuedTrack{}, false
+	}
+
+	next := m.queue[0]
+	m.queue = m.queue[1:]
+	return next, true
+}
+
+func (m *model) queueView() string {
+	queueStyle := lipgloss.NewStyle().
+		Width(36).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#89dceb")).
+		Padding(0, 1)
+
+	lines := []string{"Up Next"}
+	if len(m.queue) == 0 {
+		lines = append(lines, "  (queue is empty)")
+	} else {
+		for i, item := range m.queue {
+			lines = append(lines, fmt.Sprintf("  %d. %s", i+1, item.title))
+		}
+	}
+
+	return queueStyle.Render(strings.Join(lines, "\n"))
 }
 
 func tickCmd() tea.Cmd {
@@ -105,19 +155,18 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) View() string {
-	var builder strings.Builder
-
 	if m.help.GetshowHelp() {
 		var b strings.Builder
 		b.WriteString("Help — press ? to close\n\n")
 		b.WriteString(m.help.ListView())
 		return b.String()
 	}
-	builder.WriteString(m.filepicker.View())
-	builder.WriteString("\n")
+	var leftPane strings.Builder
+	leftPane.WriteString(m.filepicker.View())
+	leftPane.WriteString("\n")
 	statusStyle := lipgloss.NewStyle().Padding(0, 1)
 	if m.err != nil {
-		builder.WriteString(statusStyle.Render(fmt.Sprintf("❌ Error: %v", m.err)))
+		leftPane.WriteString(statusStyle.Render(fmt.Sprintf("❌ Error: %v", m.err)))
 	} else if m.playing.Title != "" {
 		statusText := fmt.Sprintf("🎵 Now Playing: %s", m.playing.Title)
 		if m.playing.Control.Paused {
@@ -126,16 +175,17 @@ func (m model) View() string {
 		if m.playing.Control.Loop {
 			statusText += "  🔁 Loop On"
 		}
-		builder.WriteString(statusStyle.Render(statusText))
-		builder.WriteString(statusStyle.Render(
+		leftPane.WriteString(statusStyle.Render(statusText))
+		leftPane.WriteString(statusStyle.Render(
 			"\n" +
 				m.playing.String()))
 	} else {
-		builder.WriteString(statusStyle.Render("Select an MP3 file to play."))
+		leftPane.WriteString(statusStyle.Render("Select an MP3 file to play."))
 	}
 	helpView := m.help.View()
-	builder.WriteString("\n" + helpView)
-	return builder.String()
+	leftPane.WriteString("\n" + helpView)
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, leftPane.String(), "  ", m.queueView())
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -171,6 +221,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = nil
 			return m, nil
 
+		case key.Matches(msg, m.help.Keys().QueueCurrent):
+			m.enqueueCurrent()
+			return m, nil
+
 		case key.Matches(msg, m.help.Keys().KeyHelp):
 			m.help.ToggleShowHelp()
 			return m, nil
@@ -193,6 +247,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.playing = msg.track
+		m.playingPath = msg.path
 		m.playing.Control.Paused = false
 		m.err = nil
 
@@ -206,7 +261,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if !m.playing.Control.Loop && m.playing.Percent() >= 1.0 {
-			m.playing.Control.Paused = false
+			if next, ok := m.dequeueNext(); ok {
+				return m, m.playSongCmd(next.path)
+			}
+
+			if err := m.stopPlayback(); err != nil {
+				m.err = err
+			}
 			return m, nil
 		}
 		return m, tickCmd()
