@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/filepicker"
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/filepicker"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/kjloveless/tmp/internal/help"
 	"github.com/kjloveless/tmp/internal/track"
 
@@ -104,14 +104,16 @@ func (m model) Init() tea.Cmd {
 	return m.filepicker.Init()
 }
 
-func (m model) View() string {
+func (m model) View() tea.View {
 	var builder strings.Builder
 
 	if m.help.GetshowHelp() {
 		var b strings.Builder
 		b.WriteString("Help — press ? to close\n\n")
 		b.WriteString(m.help.ListView())
-		return b.String()
+		v := tea.NewView(b.String())
+		v.AltScreen = true
+		return v
 	}
 	builder.WriteString(m.filepicker.View())
 	builder.WriteString("\n")
@@ -135,12 +137,14 @@ func (m model) View() string {
 	}
 	helpView := m.help.View()
 	builder.WriteString("\n" + helpView)
-	return builder.String()
+	v := tea.NewView(builder.String())
+	v.AltScreen = true
+	return v
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(msg, m.help.Keys().Quit):
 			if err := m.stopPlayback(); err != nil {
@@ -213,7 +217,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	}
 
-	if keyMsg, ok := msg.(tea.KeyMsg); ok && m.loadingDirectory {
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && m.loadingDirectory {
 		if key.Matches(keyMsg, m.filepicker.KeyMap.Open) ||
 			key.Matches(keyMsg, m.filepicker.KeyMap.Select) ||
 			key.Matches(keyMsg, m.filepicker.KeyMap.Back) {
@@ -259,7 +263,7 @@ func main() {
 
 	speaker.Init(m.sampleRate, m.sampleRate.N(time.Second/10))
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
 		panic(err)
 	}
