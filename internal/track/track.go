@@ -9,7 +9,8 @@ import (
 	"github.com/gopxl/beep/v2"
 	"github.com/gopxl/beep/v2/speaker"
 
-	"github.com/charmbracelet/bubbles/progress"
+	"charm.land/bubbles/v2/progress"
+	"charm.land/lipgloss/v2"
 )
 
 type Track struct {
@@ -49,7 +50,11 @@ func New(
 	title string,
 	length time.Duration,
 ) Track {
-	prog := progress.New(progress.WithScaledGradient("#ff7ccb", "#fdff8c"), progress.WithSpringOptions(6.0, .5))
+	prog := progress.New(
+		progress.WithColors(lipgloss.Color("#ff7ccb"), lipgloss.Color("#fdff8c")),
+		progress.WithScaled(true),
+		progress.WithSpringOptions(6.0, .5),
+	)
 	prog.ShowPercentage = false
 
 	control := control.New(streamer)
