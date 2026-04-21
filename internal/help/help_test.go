@@ -6,6 +6,16 @@ import (
 	"charm.land/bubbles/v2/key"
 )
 
+func TestDefaultLoopBindingUsesLKey(t *testing.T) {
+	loopHelp := DefaultKeyMap.Global.Loop.Help()
+	if loopHelp.Key != "l" {
+		t.Fatalf("loop help key = %q, want l", loopHelp.Key)
+	}
+	if loopHelp.Desc != "loop mode" {
+		t.Fatalf("loop help desc = %q, want loop mode", loopHelp.Desc)
+	}
+}
+
 func TestNewHelpUIPanicsOnDuplicateScopeBindings(t *testing.T) {
 	keys := DefaultKeyMap
 	keys.Queue.Down = key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "down"))

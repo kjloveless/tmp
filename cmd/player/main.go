@@ -38,6 +38,36 @@ const (
 	focusQueue
 )
 
+type loopMode int
+
+const (
+	loopOff loopMode = iota
+	loopCurrent
+	loopQueue
+)
+
+func (lm loopMode) next() loopMode {
+	switch lm {
+	case loopOff:
+		return loopCurrent
+	case loopCurrent:
+		return loopQueue
+	default:
+		return loopOff
+	}
+}
+
+func (lm loopMode) String() string {
+	switch lm {
+	case loopCurrent:
+		return "current"
+	case loopQueue:
+		return "queue"
+	default:
+		return "off"
+	}
+}
+
 type model struct {
 	playing     track.Track
 	playingPath string
@@ -45,6 +75,7 @@ type model struct {
 	queueCursor int
 	tracks      tracksComponent
 	focus       focusMode
+	loopMode    loopMode
 	sampleRate  beep.SampleRate
 	help        help.HelpUI
 	width       int
@@ -74,6 +105,8 @@ func (m *model) updatePlaybackLoop() error {
 		return nil
 	}
 
+	m.playing.Control.Loop = m.loopMode == loopCurrent
+
 	streamer := beep.Streamer(m.playing.Control.Source)
 	if m.playing.Control.Loop {
 		looped, err := beep.Loop2(m.playing.Control.Source)
@@ -87,6 +120,17 @@ func (m *model) updatePlaybackLoop() error {
 	m.playing.Control.Streamer = streamer
 	speaker.Unlock()
 
+	return nil
+}
+
+func (m *model) toggleLoopMode() error {
+	previous := m.loopMode
+	m.loopMode = m.loopMode.next()
+	if err := m.updatePlaybackLoop(); err != nil {
+		m.loopMode = previous
+		_ = m.updatePlaybackLoop()
+		return err
+	}
 	return nil
 }
 
@@ -125,17 +169,28 @@ func (m *model) stopPlayback() error {
 	return err
 }
 
+func (m *model) enqueueTrack(path, title string) bool {
+	if path == "" {
+		return false
+	}
+	if title == "" {
+		title = filepath.Base(path)
+	}
+
+	m.queue = append(m.queue, queuedTrack{
+		path:  path,
+		title: title,
+	})
+	return true
+}
+
 func (m *model) enqueueSelected() bool {
 	path, ok := m.tracks.selectedFilePath()
 	if !ok {
 		return false
 	}
 
-	m.queue = append(m.queue, queuedTrack{
-		path:  path,
-		title: filepath.Base(path),
-	})
-	return true
+	return m.enqueueTrack(path, filepath.Base(path))
 }
 
 func (m *model) clampQueueCursor() {
@@ -408,13 +463,17 @@ func (m model) playerHelpView() string {
 		if m.playing.Control.Paused {
 			statusText = fmt.Sprintf("⏸  Paused: %s", m.playing.Title)
 		}
-		if m.playing.Control.Loop {
-			statusText += "  🔁 Loop On"
+		if m.loopMode != loopOff {
+			statusText += fmt.Sprintf("  🔁 Loop: %s", m.loopMode)
 		}
 		lines = append(lines, statusStyle.Render(statusText))
 		lines = append(lines, statusStyle.Render(m.playing.String()))
 	} else {
-		lines = append(lines, statusStyle.Render("Select an MP3 file to play."))
+		statusText := "Select an MP3 file to play."
+		if m.loopMode != loopOff {
+			statusText += fmt.Sprintf("  🔁 Loop: %s", m.loopMode)
+		}
+		lines = append(lines, statusStyle.Render(statusText))
 	}
 
 	if helpView := m.help.ViewWithWidth(m.helpFocus(), contentWidth); helpView != "" {
@@ -503,13 +562,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case key.Matches(msg, m.help.Keys().Global.Loop):
-			if m.playing.Control.Ctrl == nil {
-				return m, nil
-			}
-
-			m.playing.Control.Loop = !m.playing.Control.Loop
-			if err := m.updatePlaybackLoop(); err != nil {
-				m.playing.Control.Loop = !m.playing.Control.Loop
+			if err := m.toggleLoopMode(); err != nil {
 				m.err = err
 				return m, nil
 			}
@@ -574,6 +627,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.playing.Control.Paused = false
 		m.err = nil
 
+		if err := m.updatePlaybackLoop(); err != nil {
+			m.err = err
+			return m, nil
+		}
+
 		resample := beep.Resample(4, m.playing.Format.SampleRate, m.sampleRate, m.playing.Control.Ctrl)
 		speaker.Play(resample)
 
@@ -583,7 +641,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.isPlaying() {
 			return m, nil
 		}
-		if !m.playing.Control.Loop && m.playing.Percent() >= 1.0 {
+		if m.loopMode != loopCurrent && m.playing.Percent() >= 1.0 {
+			if m.loopMode == loopQueue {
+				m.enqueueTrack(m.playingPath, m.playing.Title)
+			}
 			if cmd, ok := m.playNextQueuedCmd(); ok {
 				return m, cmd
 			}

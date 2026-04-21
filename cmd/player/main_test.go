@@ -57,6 +57,24 @@ func keyPressCode(code rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg(tea.Key{Code: code})
 }
 
+func TestLoopModeKeyCyclesOffCurrentQueue(t *testing.T) {
+	m := model{
+		help: help.NewDefault(),
+	}
+
+	for _, want := range []loopMode{loopCurrent, loopQueue, loopOff} {
+		updated, cmd := m.Update(keyPress("l"))
+		m = updated.(model)
+
+		if cmd != nil {
+			t.Fatal("loop mode toggle returned command, want nil")
+		}
+		if m.loopMode != want {
+			t.Fatalf("loop mode = %s, want %s", m.loopMode, want)
+		}
+	}
+}
+
 func TestEnqueueSelectedQueuesHighlightedFile(t *testing.T) {
 	dir := t.TempDir()
 	playingPath := filepath.Join(dir, "a.mp3")
@@ -428,5 +446,35 @@ func TestFinishedTrackStartsNextQueuedTrack(t *testing.T) {
 	}
 	if len(got.queue) != 0 {
 		t.Fatalf("queue length = %d, want 0 after dequeuing next track", len(got.queue))
+	}
+}
+
+func TestQueueLoopRequeuesFinishedTrackBehindPendingTracks(t *testing.T) {
+	source := &testStream{len: 100, position: 100}
+	format := beep.Format{SampleRate: 100, NumChannels: 2, Precision: 2}
+	m := model{
+		playing:     track.New(source, &format, "done.mp3", time.Second),
+		playingPath: "done.mp3",
+		loopMode:    loopQueue,
+		queue: []queuedTrack{{
+			path:  "next.mp3",
+			title: "next.mp3",
+		}},
+	}
+
+	updated, cmd := m.Update(tickMsg(time.Now()))
+	got := updated.(model)
+
+	if cmd == nil {
+		t.Fatal("queue loop finished track returned nil command, want playback command")
+	}
+	if len(got.queue) != 1 {
+		t.Fatalf("queue length = %d, want 1 after requeueing finished track", len(got.queue))
+	}
+	if got.queue[0].path != "done.mp3" {
+		t.Fatalf("queued path = %q, want done.mp3", got.queue[0].path)
+	}
+	if got.queue[0].title != "done.mp3" {
+		t.Fatalf("queued title = %q, want done.mp3", got.queue[0].title)
 	}
 }
