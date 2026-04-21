@@ -54,7 +54,7 @@ var DefaultKeyMap = KeyMap{
 		),
 		Loop: key.NewBinding(
 			key.WithKeys("l"),
-			key.WithHelp("l", "loop"),
+			key.WithHelp("l", "loop mode"),
 		),
 		Quit: key.NewBinding(
 			key.WithKeys("esc", "ctrl+c"),
