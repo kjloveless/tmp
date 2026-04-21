@@ -8,11 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/filepicker"
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
+	"charm.land/bubbles/v2/filepicker"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/kjloveless/tmp/internal/help"
 	"github.com/kjloveless/tmp/internal/track"
 
@@ -392,9 +391,16 @@ func (m model) Init() tea.Cmd {
 	return m.tracks.Init()
 }
 
-func (m model) helpFocus() help.FocusArea {
-	if m.focus == focusQueue {
-		return help.FocusQueue
+func (m model) View() tea.View {
+	var builder strings.Builder
+
+	if m.help.GetshowHelp() {
+		var b strings.Builder
+		b.WriteString("Help — press ? to close\n\n")
+		b.WriteString(m.help.ListView())
+		v := tea.NewView(b.String())
+		v.AltScreen = true
+		return v
 	}
 	return help.FocusTracks
 }
@@ -419,62 +425,16 @@ func (m model) playerHelpView() string {
 	} else {
 		lines = append(lines, statusStyle.Render("Select an MP3 file to play."))
 	}
-
-	if helpView := m.help.ViewWithWidth(m.helpFocus(), contentWidth); helpView != "" {
-		lines = append(lines, helpView)
-	}
-
-	return playerHelpPanelStyle().
-		Width(m.playerHelpPanelWidth()).
-		Render(truncateBlock(strings.Join(lines, "\n"), contentWidth))
-}
-
-func (m model) topPaneHeight(bottom string) int {
-	height := m.windowHeight() - lipgloss.Height(bottom)
-	if height < minTopPaneHeight {
-		return minTopPaneHeight
-	}
-	return height
-}
-
-func (m model) tracksViewHeight(topHeight int) int {
-	height := topHeight - trackPanelStyle(m.focus == focusTracks).GetVerticalFrameSize() - 1
-	if height < 0 {
-		return 0
-	}
-	return height
-}
-
-func (m model) View() string {
-	if m.help.GetshowHelp() {
-		var b strings.Builder
-		b.WriteString("Help — press ? to close\n\n")
-		b.WriteString(m.help.ListView(m.helpFocus()))
-		return b.String()
-	}
-	bottom := m.playerHelpView()
-	topHeight := m.topPaneHeight(bottom)
-
-	sizing := m.topPaneSizing()
-	queue := m.queueViewWithWidth(sizing.queueWidth)
-	trackStyle := trackPanelStyle(m.focus == focusTracks)
-	leftContentWidth := boundedWidth(sizing.leftWidth - trackStyle.GetHorizontalPadding())
-	var leftPane strings.Builder
-	leftPane.WriteString(m.tracks.ViewWithHeight(m.tracksViewHeight(topHeight)))
-	left := trackStyle.
-		Width(sizing.leftWidth).
-		Render(truncateBlock(leftPane.String(), leftContentWidth))
-
-	top := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", sizing.gap), queue)
-	top = truncateBlock(top, m.windowWidth())
-	top = truncateBlockHeight(top, topHeight)
-	return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+	helpView := m.help.View()
+	builder.WriteString("\n" + helpView)
+	v := tea.NewView(builder.String())
+	v.AltScreen = true
+	return v
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		// Global control board hotkeys are always handled first.
+	case tea.KeyPressMsg:
 		switch {
 		case key.Matches(msg, m.help.Keys().Global.Quit):
 			if err := m.stopPlayback(); err != nil {
@@ -586,9 +546,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 
-			if err := m.stopPlayback(); err != nil {
-				m.err = err
-			}
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && m.loadingDirectory {
+		if key.Matches(keyMsg, m.filepicker.KeyMap.Open) ||
+			key.Matches(keyMsg, m.filepicker.KeyMap.Select) ||
+			key.Matches(keyMsg, m.filepicker.KeyMap.Back) {
 			return m, nil
 		}
 		return m, tickCmd()
@@ -626,7 +587,7 @@ func main() {
 
 	speaker.Init(m.sampleRate, m.sampleRate.N(time.Second/10))
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
 		panic(err)
 	}
