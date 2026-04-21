@@ -6,11 +6,11 @@ import (
 
 type Control struct {
 	*beep.Ctrl
-	Source beep.StreamSeeker
+	Source beep.StreamSeekCloser
 	Loop   bool
 }
 
-func New(source beep.StreamSeeker) Control {
+func New(source beep.StreamSeekCloser) Control {
 	return Control{
 		Ctrl:   &beep.Ctrl{Streamer: source, Paused: false},
 		Source: source,
