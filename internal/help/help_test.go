@@ -22,10 +22,22 @@ func TestNewHelpUIPanicsOnDuplicateScopeBindings(t *testing.T) {
 
 func TestContextualBindingsIncludesFocusedComponent(t *testing.T) {
 	hu := NewDefault()
-	tracksView := hu.View(FocusTracks)
-	queueView := hu.View(FocusQueue)
+	tracksBindings := hu.contextualBindings(FocusTracks)
+	queueBindings := hu.contextualBindings(FocusQueue)
 
-	if tracksView == queueView {
-		t.Fatal("contextual short help should differ between track and queue focus")
+	if got, want := len(queueBindings), len(tracksBindings); got != want {
+		t.Fatalf("queue help binding count = %d, want %d", got, want)
+	}
+	if desc := tracksBindings[len(tracksBindings)-1].Help().Desc; desc != "queue selected" {
+		t.Fatalf("tracks contextual action = %q, want queue selected", desc)
+	}
+	if desc := queueBindings[len(queueBindings)-1].Help().Desc; desc != "dequeue selected" {
+		t.Fatalf("queue contextual action = %q, want dequeue selected", desc)
+	}
+	for _, b := range queueBindings {
+		switch b.Help().Desc {
+		case "move up", "move down":
+			t.Fatalf("queue contextual help should only swap the action, got movement binding %q", b.Help().Desc)
+		}
 	}
 }

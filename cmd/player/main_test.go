@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/filepicker"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/gopxl/beep/v2"
 	"github.com/kjloveless/tmp/internal/help"
 	"github.com/kjloveless/tmp/internal/track"
@@ -234,6 +235,45 @@ func TestQueueFocusDequeueRemovesSelectedQueuedTrack(t *testing.T) {
 	}
 }
 
+func TestFocusNextIgnoresEmptyQueue(t *testing.T) {
+	m := model{
+		help: help.NewDefault(),
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	got := updated.(model)
+
+	if cmd != nil {
+		t.Fatal("focus toggle returned command, want nil")
+	}
+	if got.focus != focusTracks {
+		t.Fatalf("focus = %v, want tracks when queue is empty", got.focus)
+	}
+	if focus := got.helpFocus(); focus != help.FocusTracks {
+		t.Fatalf("help focus = %v, want tracks when queue is empty", focus)
+	}
+}
+
+func TestDequeueLastTrackReturnsFocusToTracks(t *testing.T) {
+	m := model{
+		help:  help.NewDefault(),
+		focus: focusQueue,
+		queue: []queuedTrack{
+			{path: "last.mp3", title: "last.mp3"},
+		},
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	got := updated.(model)
+
+	if len(got.queue) != 0 {
+		t.Fatalf("queue length = %d, want 0", len(got.queue))
+	}
+	if got.focus != focusTracks {
+		t.Fatalf("focus = %v, want tracks after emptying queue", got.focus)
+	}
+}
+
 func TestQueueViewShowsPlayingTrackAndKeepsFixedWidth(t *testing.T) {
 	empty := (&model{}).queueView()
 	withLongPlaying := (&model{
@@ -264,6 +304,98 @@ func TestTruncateBlockKeepsEveryLineWithinWidth(t *testing.T) {
 	for _, line := range strings.Split(got, "\n") {
 		if lineWidth := lipgloss.Width(line); lineWidth > width {
 			t.Fatalf("line width = %d, want <= %d for %q", lineWidth, width, line)
+		}
+	}
+}
+
+func TestPlayerHelpViewSpansWindowWidth(t *testing.T) {
+	const width = 96
+	m := model{
+		width: width,
+		help:  help.NewDefault(),
+	}
+
+	got := m.playerHelpView()
+	if gotWidth := lipgloss.Width(got); gotWidth != width {
+		t.Fatalf("player/help panel width = %d, want %d", gotWidth, width)
+	}
+	if !strings.Contains(got, "Select an MP3 file to play.") {
+		t.Fatal("player/help panel does not include idle player status")
+	}
+	if !strings.Contains(got, "play/pause") {
+		t.Fatal("player/help panel does not include contextual help")
+	}
+}
+
+func TestViewFitsWithinWindowHeight(t *testing.T) {
+	const (
+		width  = 80
+		height = 24
+	)
+	fp := filepicker.New()
+	fp.AutoHeight = false
+	fp.Height = height
+
+	m := model{
+		width:  width,
+		height: height,
+		tracks: newTracksComponent(fp),
+		help:   help.NewDefault(),
+	}
+
+	got := m.View()
+	if gotHeight := lipgloss.Height(got); gotHeight > height {
+		t.Fatalf("view height = %d, want <= %d", gotHeight, height)
+	}
+	if !strings.HasPrefix(got, "╭") {
+		t.Fatalf("view should start with top border, got %q", strings.Split(got, "\n")[0])
+	}
+
+	bottom := m.playerHelpView()
+	topHeight := m.topPaneHeight(bottom)
+	lines := strings.Split(got, "\n")
+	hasTrackBottomBorder := false
+	for _, line := range lines[:min(topHeight, len(lines))] {
+		if strings.HasPrefix(line, "╰") {
+			hasTrackBottomBorder = true
+			break
+		}
+	}
+	if !hasTrackBottomBorder {
+		t.Fatal("top pane should include the tracks bottom border before the bottom player/help panel")
+	}
+}
+
+func TestViewFitsWithinWindowWidthWithQueue(t *testing.T) {
+	const height = 24
+
+	for _, width := range []int{40, 60, 80} {
+		fp := filepicker.New()
+
+		m := model{
+			width:  width,
+			height: height,
+			tracks: newTracksComponent(fp),
+			help:   help.NewDefault(),
+			queue: []queuedTrack{
+				{path: "first.mp3", title: strings.Repeat("first-", 10) + ".mp3"},
+				{path: "second.mp3", title: strings.Repeat("second-", 10) + ".mp3"},
+			},
+		}
+
+		got := m.View()
+		if gotWidth := lipgloss.Width(got); gotWidth > width {
+			t.Fatalf("view width = %d, want <= %d", gotWidth, width)
+		}
+		for i, line := range strings.Split(got, "\n") {
+			if lineWidth := lipgloss.Width(line); lineWidth > width {
+				t.Fatalf("line %d width = %d, want <= %d for %q", i, lineWidth, width, line)
+			}
+		}
+
+		firstLine := ansi.Strip(strings.Split(got, "\n")[0])
+		if !strings.HasSuffix(firstLine, "╮") {
+			t.Fatalf("queue panel top border should be visible at right edge for width %d, got %q", width, firstLine)
 		}
 	}
 }

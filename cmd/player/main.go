@@ -23,9 +23,12 @@ import (
 
 const (
 	defaultWindowWidth     = 80
+	defaultWindowHeight    = 24
 	queuePanelContentWidth = 36
+	minQueuePanelWidth     = 16
 	queuePanelGap          = 2
 	minLeftPaneWidth       = 20
+	minTopPaneHeight       = 4
 )
 
 type focusMode int
@@ -45,6 +48,7 @@ type model struct {
 	sampleRate  beep.SampleRate
 	help        help.HelpUI
 	width       int
+	height      int
 	err         error
 }
 
@@ -153,6 +157,27 @@ func (m *model) moveQueueCursor(delta int) {
 	m.clampQueueCursor()
 }
 
+func (m *model) ensureFocusablePane() {
+	if m.focus == focusQueue && len(m.queue) == 0 {
+		m.focus = focusTracks
+	}
+}
+
+func (m *model) focusNextPane() {
+	if m.focus == focusQueue {
+		m.focus = focusTracks
+		return
+	}
+
+	if len(m.queue) == 0 {
+		m.focus = focusTracks
+		return
+	}
+
+	m.focus = focusQueue
+	m.clampQueueCursor()
+}
+
 func (m *model) dequeueSelected() (queuedTrack, bool) {
 	if len(m.queue) == 0 {
 		return queuedTrack{}, false
@@ -162,6 +187,7 @@ func (m *model) dequeueSelected() (queuedTrack, bool) {
 	selected := m.queue[m.queueCursor]
 	m.queue = append(m.queue[:m.queueCursor], m.queue[m.queueCursor+1:]...)
 	m.clampQueueCursor()
+	m.ensureFocusablePane()
 	return selected, true
 }
 
@@ -176,6 +202,7 @@ func (m *model) dequeueNext() (queuedTrack, bool) {
 		m.queueCursor--
 	}
 	m.clampQueueCursor()
+	m.ensureFocusablePane()
 	return next, true
 }
 
@@ -191,59 +218,144 @@ func (m model) isPlaying() bool {
 	return m.playing.Control.Ctrl != nil && m.playing.Control.Source != nil
 }
 
-func queueLine(s string) string {
-	return lipgloss.NewStyle().MaxWidth(queuePanelContentWidth).Render(s)
+func boundedWidth(width int) int {
+	if width < 0 {
+		return 0
+	}
+	return width
 }
 
-func (m *model) queueView() string {
+func trackPanelStyle(focused bool) lipgloss.Style {
 	borderColor := lipgloss.Color("#89dceb")
-	if m.focus == focusQueue {
+	if focused {
 		borderColor = lipgloss.Color("#f5c2e7")
 	}
 
-	queueStyle := lipgloss.NewStyle().
-		Width(queuePanelContentWidth).
-		MaxWidth(queuePanelContentWidth).
+	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(borderColor).
 		Padding(0, 1)
+}
 
-	lines := []string{"Queue"}
+func queuePanelStyle(focused bool, width int) lipgloss.Style {
+	borderColor := lipgloss.Color("#89dceb")
+	if focused {
+		borderColor = lipgloss.Color("#f5c2e7")
+	}
+
+	return lipgloss.NewStyle().
+		Width(boundedWidth(width)).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Padding(0, 1)
+}
+
+func playerHelpPanelStyle() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#94e2d5")).
+		Padding(0, 1)
+}
+
+func (m *model) queueView() string {
+	return m.queueViewWithWidth(queuePanelContentWidth)
+}
+
+func queueLine(width int, s string) string {
+	return ansi.Truncate(s, boundedWidth(width), "")
+}
+
+func (m *model) queueViewWithWidth(width int) string {
+	queueStyle := queuePanelStyle(m.focus == focusQueue, width)
+	contentWidth := boundedWidth(width - queueStyle.GetHorizontalPadding())
+
+	lines := []string{queueLine(contentWidth, "Queue")}
 	if m.playing.Title != "" {
 		lines = append(lines,
 			"",
-			"Playing",
-			queueLine("  "+m.playing.Title),
+			queueLine(contentWidth, "Playing"),
+			queueLine(contentWidth, "  "+m.playing.Title),
 		)
 	}
 
-	lines = append(lines, "", "Up Next")
+	lines = append(lines, "", queueLine(contentWidth, "Up Next"))
 	if len(m.queue) == 0 {
-		lines = append(lines, "  (empty)")
+		lines = append(lines, queueLine(contentWidth, "  (empty)"))
 	} else {
 		for i, item := range m.queue {
 			prefix := "  "
 			if m.focus == focusQueue && i == m.queueCursor {
 				prefix = "> "
 			}
-			lines = append(lines, queueLine(fmt.Sprintf("%s%d. %s", prefix, i+1, item.title)))
+			lines = append(lines, queueLine(contentWidth, fmt.Sprintf("%s%d. %s", prefix, i+1, item.title)))
 		}
 	}
 
 	return queueStyle.Render(strings.Join(lines, "\n"))
 }
 
-func (m model) leftPaneWidth(queue string) int {
-	width := m.width
-	if width <= 0 {
-		width = defaultWindowWidth
+func (m model) windowWidth() int {
+	if m.width > 0 {
+		return m.width
+	}
+	return defaultWindowWidth
+}
+
+func (m model) windowHeight() int {
+	if m.height > 0 {
+		return m.height
+	}
+	return defaultWindowHeight
+}
+
+type topPaneSizing struct {
+	leftWidth  int
+	queueWidth int
+	gap        int
+}
+
+func (m model) topPaneSizing() topPaneSizing {
+	trackBorderWidth := trackPanelStyle(m.focus == focusTracks).GetHorizontalBorderSize()
+	queueBorderWidth := queuePanelStyle(m.focus == focusQueue, queuePanelContentWidth).GetHorizontalBorderSize()
+
+	gap := queuePanelGap
+	if widthAfterBorders := m.windowWidth() - trackBorderWidth - queueBorderWidth; widthAfterBorders < gap {
+		gap = boundedWidth(widthAfterBorders)
 	}
 
-	leftWidth := width - lipgloss.Width(queue) - queuePanelGap
-	if leftWidth < minLeftPaneWidth {
+	availableWidth := boundedWidth(m.windowWidth() - trackBorderWidth - queueBorderWidth - gap)
+	queueWidth := queuePanelContentWidth
+	if availableWidth < minLeftPaneWidth+queueWidth {
+		queueWidth = availableWidth - minLeftPaneWidth
+	}
+	if queueWidth < minQueuePanelWidth {
+		queueWidth = minQueuePanelWidth
+	}
+	if queueWidth > availableWidth {
+		queueWidth = availableWidth
+	}
+
+	return topPaneSizing{
+		leftWidth:  availableWidth - queueWidth,
+		queueWidth: queueWidth,
+		gap:        gap,
+	}
+}
+
+func (m model) playerHelpPanelWidth() int {
+	width := m.windowWidth() - playerHelpPanelStyle().GetHorizontalBorderSize()
+	if width < minLeftPaneWidth {
 		return minLeftPaneWidth
 	}
-	return leftWidth
+	return width
+}
+
+func (m model) playerHelpContentWidth() int {
+	width := m.playerHelpPanelWidth() - playerHelpPanelStyle().GetHorizontalPadding()
+	if width < minLeftPaneWidth {
+		return minLeftPaneWidth
+	}
+	return width
 }
 
 func truncateBlock(s string, width int) string {
@@ -254,6 +366,18 @@ func truncateBlock(s string, width int) string {
 	lines := strings.Split(s, "\n")
 	for i, line := range lines {
 		lines[i] = ansi.Truncate(line, width, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func truncateBlockHeight(s string, height int) string {
+	if height <= 0 {
+		return ""
+	}
+
+	lines := strings.Split(s, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
 	}
 	return strings.Join(lines, "\n")
 }
@@ -275,19 +399,13 @@ func (m model) helpFocus() help.FocusArea {
 	return help.FocusTracks
 }
 
-func (m model) View() string {
-	if m.help.GetshowHelp() {
-		var b strings.Builder
-		b.WriteString("Help — press ? to close\n\n")
-		b.WriteString(m.help.ListView(m.helpFocus()))
-		return b.String()
-	}
-	var leftPane strings.Builder
-	leftPane.WriteString(m.tracks.View())
-	leftPane.WriteString("\n")
-	statusStyle := lipgloss.NewStyle().Padding(0, 1)
+func (m model) playerHelpView() string {
+	contentWidth := m.playerHelpContentWidth()
+	statusStyle := lipgloss.NewStyle().Padding(0, 1).MaxWidth(contentWidth)
+
+	lines := make([]string, 0, 4)
 	if m.err != nil {
-		leftPane.WriteString(statusStyle.Render(fmt.Sprintf("❌ Error: %v", m.err)))
+		lines = append(lines, statusStyle.Render(fmt.Sprintf("❌ Error: %v", m.err)))
 	} else if m.playing.Title != "" {
 		statusText := fmt.Sprintf("🎵 Now Playing: %s", m.playing.Title)
 		if m.playing.Control.Paused {
@@ -296,30 +414,61 @@ func (m model) View() string {
 		if m.playing.Control.Loop {
 			statusText += "  🔁 Loop On"
 		}
-		leftPane.WriteString(statusStyle.Render(statusText))
-		leftPane.WriteString(statusStyle.Render(
-			"\n" +
-				m.playing.String()))
+		lines = append(lines, statusStyle.Render(statusText))
+		lines = append(lines, statusStyle.Render(m.playing.String()))
 	} else {
-		leftPane.WriteString(statusStyle.Render("Select an MP3 file to play."))
+		lines = append(lines, statusStyle.Render("Select an MP3 file to play."))
 	}
-	helpView := m.help.View(m.helpFocus())
-	leftPane.WriteString("\n" + helpView)
 
-	queue := m.queueView()
-	leftWidth := m.leftPaneWidth(queue)
-	leftBorderColor := lipgloss.Color("#89dceb")
-	if m.focus == focusTracks {
-		leftBorderColor = lipgloss.Color("#f5c2e7")
+	if helpView := m.help.ViewWithWidth(m.helpFocus(), contentWidth); helpView != "" {
+		lines = append(lines, helpView)
 	}
-	left := lipgloss.NewStyle().
-		Width(leftWidth).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(leftBorderColor).
-		Padding(0, 1).
-		Render(truncateBlock(leftPane.String(), leftWidth))
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", queuePanelGap), queue)
+	return playerHelpPanelStyle().
+		Width(m.playerHelpPanelWidth()).
+		Render(truncateBlock(strings.Join(lines, "\n"), contentWidth))
+}
+
+func (m model) topPaneHeight(bottom string) int {
+	height := m.windowHeight() - lipgloss.Height(bottom)
+	if height < minTopPaneHeight {
+		return minTopPaneHeight
+	}
+	return height
+}
+
+func (m model) tracksViewHeight(topHeight int) int {
+	height := topHeight - trackPanelStyle(m.focus == focusTracks).GetVerticalFrameSize() - 1
+	if height < 0 {
+		return 0
+	}
+	return height
+}
+
+func (m model) View() string {
+	if m.help.GetshowHelp() {
+		var b strings.Builder
+		b.WriteString("Help — press ? to close\n\n")
+		b.WriteString(m.help.ListView(m.helpFocus()))
+		return b.String()
+	}
+	bottom := m.playerHelpView()
+	topHeight := m.topPaneHeight(bottom)
+
+	sizing := m.topPaneSizing()
+	queue := m.queueViewWithWidth(sizing.queueWidth)
+	trackStyle := trackPanelStyle(m.focus == focusTracks)
+	leftContentWidth := boundedWidth(sizing.leftWidth - trackStyle.GetHorizontalPadding())
+	var leftPane strings.Builder
+	leftPane.WriteString(m.tracks.ViewWithHeight(m.tracksViewHeight(topHeight)))
+	left := trackStyle.
+		Width(sizing.leftWidth).
+		Render(truncateBlock(leftPane.String(), leftContentWidth))
+
+	top := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", sizing.gap), queue)
+	top = truncateBlock(top, m.windowWidth())
+	top = truncateBlockHeight(top, topHeight)
+	return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -348,12 +497,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case key.Matches(msg, m.help.Keys().Global.FocusNext):
-			if m.focus == focusQueue {
-				m.focus = focusTracks
-			} else {
-				m.focus = focusQueue
-				m.clampQueueCursor()
-			}
+			m.focusNextPane()
 			return m, nil
 
 		case key.Matches(msg, m.help.Keys().Global.Loop):
@@ -413,6 +557,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
 
 	case loadedTrackMsg:
 		speaker.Clear()

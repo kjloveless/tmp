@@ -30,6 +30,15 @@ func (tc tracksComponent) View() string {
 	return tc.picker.View()
 }
 
+func (tc tracksComponent) ViewWithHeight(height int) string {
+	if height < 0 {
+		height = 0
+	}
+	tc.picker.AutoHeight = false
+	tc.picker.SetHeight(height)
+	return tc.picker.View()
+}
+
 func (tc tracksComponent) pickerEntries() ([]os.DirEntry, error) {
 	entries, err := os.ReadDir(tc.picker.CurrentDirectory)
 	if err != nil {

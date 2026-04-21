@@ -78,11 +78,11 @@ var DefaultKeyMap = KeyMap{
 		),
 		Up: key.NewBinding(
 			key.WithKeys("up", "k"),
-			key.WithHelp("↑/k", "queue up"),
+			key.WithHelp("↑/k", "move up"),
 		),
 		Down: key.NewBinding(
 			key.WithKeys("down", "j"),
-			key.WithHelp("↓/j", "queue down"),
+			key.WithHelp("↓/j", "move down"),
 		),
 	},
 }
@@ -159,7 +159,7 @@ func (hu HelpUI) contextualBindings(focus FocusArea) []key.Binding {
 		hu.keys.Global.KeyHelp,
 	}
 	if focus == FocusQueue {
-		bindings = append(bindings, hu.keys.Queue.Up, hu.keys.Queue.Down, hu.keys.Queue.DequeueSelected)
+		bindings = append(bindings, hu.keys.Queue.DequeueSelected)
 	} else {
 		bindings = append(bindings, hu.keys.Tracks.QueueSelected)
 	}
@@ -173,6 +173,11 @@ func (hu HelpUI) View(focus FocusArea) string {
 		full = append(full, []key.Binding{b})
 	}
 	return hu.model.View(displayKeyMap{short: short, full: full})
+}
+
+func (hu HelpUI) ViewWithWidth(focus FocusArea, width int) string {
+	hu.model.Width = width
+	return hu.View(focus)
 }
 
 func (hu HelpUI) ListView(focus FocusArea) string {
