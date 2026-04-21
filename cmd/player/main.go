@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/kjloveless/tmp/internal/help"
 	"github.com/kjloveless/tmp/internal/track"
 
@@ -20,19 +21,47 @@ import (
 	"github.com/gopxl/beep/v2/speaker"
 )
 
+const (
+	defaultWindowWidth     = 80
+	defaultWindowHeight    = 24
+	queuePanelContentWidth = 36
+	minQueuePanelWidth     = 16
+	queuePanelGap          = 2
+	minLeftPaneWidth       = 20
+	minTopPaneHeight       = 4
+)
+
+type focusMode int
+
+const (
+	focusTracks focusMode = iota
+	focusQueue
+)
+
 type model struct {
-	playing          track.Track
-	filepicker       filepicker.Model
-	sampleRate       beep.SampleRate
-	help             help.HelpUI
-	loadingDirectory bool
-	err              error
+	playing     track.Track
+	playingPath string
+	queue       []queuedTrack
+	queueCursor int
+	tracks      tracksComponent
+	focus       focusMode
+	sampleRate  beep.SampleRate
+	help        help.HelpUI
+	width       int
+	height      int
+	err         error
+}
+
+type queuedTrack struct {
+	path  string
+	title string
 }
 
 type (
 	errorMsg       error
 	loadedTrackMsg struct {
 		track    track.Track
+		path     string
 		previous beep.StreamSeekCloser
 	}
 )
@@ -78,6 +107,7 @@ func (m *model) playSongCmd(path string) tea.Cmd {
 		length := format.SampleRate.D(streamer.Len())
 		return loadedTrackMsg{
 			track:    track.New(streamer, &format, title, length),
+			path:     path,
 			previous: previous,
 		}
 	}
@@ -91,7 +121,265 @@ func (m *model) stopPlayback() error {
 	speaker.Clear()
 	err := m.playing.Control.Source.Close()
 	m.playing = track.Track{}
+	m.playingPath = ""
 	return err
+}
+
+func (m *model) enqueueSelected() bool {
+	path, ok := m.tracks.selectedFilePath()
+	if !ok {
+		return false
+	}
+
+	m.queue = append(m.queue, queuedTrack{
+		path:  path,
+		title: filepath.Base(path),
+	})
+	return true
+}
+
+func (m *model) clampQueueCursor() {
+	if len(m.queue) == 0 {
+		m.queueCursor = 0
+		return
+	}
+
+	switch {
+	case m.queueCursor < 0:
+		m.queueCursor = 0
+	case m.queueCursor >= len(m.queue):
+		m.queueCursor = len(m.queue) - 1
+	}
+}
+
+func (m *model) moveQueueCursor(delta int) {
+	m.queueCursor += delta
+	m.clampQueueCursor()
+}
+
+func (m *model) ensureFocusablePane() {
+	if m.focus == focusQueue && len(m.queue) == 0 {
+		m.focus = focusTracks
+	}
+}
+
+func (m *model) focusNextPane() {
+	if m.focus == focusQueue {
+		m.focus = focusTracks
+		return
+	}
+
+	if len(m.queue) == 0 {
+		m.focus = focusTracks
+		return
+	}
+
+	m.focus = focusQueue
+	m.clampQueueCursor()
+}
+
+func (m *model) dequeueSelected() (queuedTrack, bool) {
+	if len(m.queue) == 0 {
+		return queuedTrack{}, false
+	}
+
+	m.clampQueueCursor()
+	selected := m.queue[m.queueCursor]
+	m.queue = append(m.queue[:m.queueCursor], m.queue[m.queueCursor+1:]...)
+	m.clampQueueCursor()
+	m.ensureFocusablePane()
+	return selected, true
+}
+
+func (m *model) dequeueNext() (queuedTrack, bool) {
+	if len(m.queue) == 0 {
+		return queuedTrack{}, false
+	}
+
+	next := m.queue[0]
+	m.queue = m.queue[1:]
+	if m.queueCursor > 0 {
+		m.queueCursor--
+	}
+	m.clampQueueCursor()
+	m.ensureFocusablePane()
+	return next, true
+}
+
+func (m *model) playNextQueuedCmd() (tea.Cmd, bool) {
+	next, ok := m.dequeueNext()
+	if !ok {
+		return nil, false
+	}
+	return m.playSongCmd(next.path), true
+}
+
+func (m model) isPlaying() bool {
+	return m.playing.Control.Ctrl != nil && m.playing.Control.Source != nil
+}
+
+func boundedWidth(width int) int {
+	if width < 0 {
+		return 0
+	}
+	return width
+}
+
+func trackPanelStyle(focused bool) lipgloss.Style {
+	borderColor := lipgloss.Color("#89dceb")
+	if focused {
+		borderColor = lipgloss.Color("#f5c2e7")
+	}
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Padding(0, 1)
+}
+
+func queuePanelStyle(focused bool, width int) lipgloss.Style {
+	borderColor := lipgloss.Color("#89dceb")
+	if focused {
+		borderColor = lipgloss.Color("#f5c2e7")
+	}
+
+	return lipgloss.NewStyle().
+		Width(boundedWidth(width)).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Padding(0, 1)
+}
+
+func playerHelpPanelStyle() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#94e2d5")).
+		Padding(0, 1)
+}
+
+func (m *model) queueView() string {
+	return m.queueViewWithWidth(queuePanelContentWidth)
+}
+
+func queueLine(width int, s string) string {
+	return ansi.Truncate(s, boundedWidth(width), "")
+}
+
+func (m *model) queueViewWithWidth(width int) string {
+	queueStyle := queuePanelStyle(m.focus == focusQueue, width)
+	contentWidth := boundedWidth(width - queueStyle.GetHorizontalPadding())
+
+	lines := []string{queueLine(contentWidth, "Queue")}
+	if m.playing.Title != "" {
+		lines = append(lines,
+			"",
+			queueLine(contentWidth, "Playing"),
+			queueLine(contentWidth, "  "+m.playing.Title),
+		)
+	}
+
+	lines = append(lines, "", queueLine(contentWidth, "Up Next"))
+	if len(m.queue) == 0 {
+		lines = append(lines, queueLine(contentWidth, "  (empty)"))
+	} else {
+		for i, item := range m.queue {
+			prefix := "  "
+			if m.focus == focusQueue && i == m.queueCursor {
+				prefix = "> "
+			}
+			lines = append(lines, queueLine(contentWidth, fmt.Sprintf("%s%d. %s", prefix, i+1, item.title)))
+		}
+	}
+
+	return queueStyle.Render(strings.Join(lines, "\n"))
+}
+
+func (m model) windowWidth() int {
+	if m.width > 0 {
+		return m.width
+	}
+	return defaultWindowWidth
+}
+
+func (m model) windowHeight() int {
+	if m.height > 0 {
+		return m.height
+	}
+	return defaultWindowHeight
+}
+
+type topPaneSizing struct {
+	leftWidth  int
+	queueWidth int
+	gap        int
+}
+
+func (m model) topPaneSizing() topPaneSizing {
+	trackBorderWidth := trackPanelStyle(m.focus == focusTracks).GetHorizontalBorderSize()
+	queueBorderWidth := queuePanelStyle(m.focus == focusQueue, queuePanelContentWidth).GetHorizontalBorderSize()
+
+	gap := queuePanelGap
+	if widthAfterBorders := m.windowWidth() - trackBorderWidth - queueBorderWidth; widthAfterBorders < gap {
+		gap = boundedWidth(widthAfterBorders)
+	}
+
+	availableWidth := boundedWidth(m.windowWidth() - trackBorderWidth - queueBorderWidth - gap)
+	queueWidth := queuePanelContentWidth
+	if availableWidth < minLeftPaneWidth+queueWidth {
+		queueWidth = availableWidth - minLeftPaneWidth
+	}
+	if queueWidth < minQueuePanelWidth {
+		queueWidth = minQueuePanelWidth
+	}
+	if queueWidth > availableWidth {
+		queueWidth = availableWidth
+	}
+
+	return topPaneSizing{
+		leftWidth:  availableWidth - queueWidth,
+		queueWidth: queueWidth,
+		gap:        gap,
+	}
+}
+
+func (m model) playerHelpPanelWidth() int {
+	width := m.windowWidth() - playerHelpPanelStyle().GetHorizontalBorderSize()
+	if width < minLeftPaneWidth {
+		return minLeftPaneWidth
+	}
+	return width
+}
+
+func (m model) playerHelpContentWidth() int {
+	width := m.playerHelpPanelWidth() - playerHelpPanelStyle().GetHorizontalPadding()
+	if width < minLeftPaneWidth {
+		return minLeftPaneWidth
+	}
+	return width
+}
+
+func truncateBlock(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = ansi.Truncate(line, width, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func truncateBlockHeight(s string, height int) string {
+	if height <= 0 {
+		return ""
+	}
+
+	lines := strings.Split(s, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	return strings.Join(lines, "\n")
 }
 
 func tickCmd() tea.Cmd {
@@ -101,23 +389,23 @@ func tickCmd() tea.Cmd {
 }
 
 func (m model) Init() tea.Cmd {
-	return m.filepicker.Init()
+	return m.tracks.Init()
 }
 
-func (m model) View() string {
-	var builder strings.Builder
-
-	if m.help.GetshowHelp() {
-		var b strings.Builder
-		b.WriteString("Help — press ? to close\n\n")
-		b.WriteString(m.help.ListView())
-		return b.String()
+func (m model) helpFocus() help.FocusArea {
+	if m.focus == focusQueue {
+		return help.FocusQueue
 	}
-	builder.WriteString(m.filepicker.View())
-	builder.WriteString("\n")
-	statusStyle := lipgloss.NewStyle().Padding(0, 1)
+	return help.FocusTracks
+}
+
+func (m model) playerHelpView() string {
+	contentWidth := m.playerHelpContentWidth()
+	statusStyle := lipgloss.NewStyle().Padding(0, 1).MaxWidth(contentWidth)
+
+	lines := make([]string, 0, 4)
 	if m.err != nil {
-		builder.WriteString(statusStyle.Render(fmt.Sprintf("❌ Error: %v", m.err)))
+		lines = append(lines, statusStyle.Render(fmt.Sprintf("❌ Error: %v", m.err)))
 	} else if m.playing.Title != "" {
 		statusText := fmt.Sprintf("🎵 Now Playing: %s", m.playing.Title)
 		if m.playing.Control.Paused {
@@ -126,29 +414,81 @@ func (m model) View() string {
 		if m.playing.Control.Loop {
 			statusText += "  🔁 Loop On"
 		}
-		builder.WriteString(statusStyle.Render(statusText))
-		builder.WriteString(statusStyle.Render(
-			"\n" +
-				m.playing.String()))
+		lines = append(lines, statusStyle.Render(statusText))
+		lines = append(lines, statusStyle.Render(m.playing.String()))
 	} else {
-		builder.WriteString(statusStyle.Render("Select an MP3 file to play."))
+		lines = append(lines, statusStyle.Render("Select an MP3 file to play."))
 	}
-	helpView := m.help.View()
-	builder.WriteString("\n" + helpView)
-	return builder.String()
+
+	if helpView := m.help.ViewWithWidth(m.helpFocus(), contentWidth); helpView != "" {
+		lines = append(lines, helpView)
+	}
+
+	return playerHelpPanelStyle().
+		Width(m.playerHelpPanelWidth()).
+		Render(truncateBlock(strings.Join(lines, "\n"), contentWidth))
+}
+
+func (m model) topPaneHeight(bottom string) int {
+	height := m.windowHeight() - lipgloss.Height(bottom)
+	if height < minTopPaneHeight {
+		return minTopPaneHeight
+	}
+	return height
+}
+
+func (m model) tracksViewHeight(topHeight int) int {
+	height := topHeight - trackPanelStyle(m.focus == focusTracks).GetVerticalFrameSize() - 1
+	if height < 0 {
+		return 0
+	}
+	return height
+}
+
+func (m model) View() string {
+	if m.help.GetshowHelp() {
+		var b strings.Builder
+		b.WriteString("Help — press ? to close\n\n")
+		b.WriteString(m.help.ListView(m.helpFocus()))
+		return b.String()
+	}
+	bottom := m.playerHelpView()
+	topHeight := m.topPaneHeight(bottom)
+
+	sizing := m.topPaneSizing()
+	queue := m.queueViewWithWidth(sizing.queueWidth)
+	trackStyle := trackPanelStyle(m.focus == focusTracks)
+	leftContentWidth := boundedWidth(sizing.leftWidth - trackStyle.GetHorizontalPadding())
+	var leftPane strings.Builder
+	leftPane.WriteString(m.tracks.ViewWithHeight(m.tracksViewHeight(topHeight)))
+	left := trackStyle.
+		Width(sizing.leftWidth).
+		Render(truncateBlock(leftPane.String(), leftContentWidth))
+
+	top := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", sizing.gap), queue)
+	top = truncateBlock(top, m.windowWidth())
+	top = truncateBlockHeight(top, topHeight)
+	return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Global control board hotkeys are always handled first.
 		switch {
-		case key.Matches(msg, m.help.Keys().Quit):
+		case key.Matches(msg, m.help.Keys().Global.Quit):
 			if err := m.stopPlayback(); err != nil {
 				log.Printf("error closing active track: %v", err)
 			}
 			return m, tea.Quit
-		case key.Matches(msg, m.help.Keys().PlayPause):
-			if m.playing.Control.Ctrl == nil {
+		case key.Matches(msg, m.help.Keys().Global.PlayPause):
+			if !m.isPlaying() {
+				if len(m.queue) == 0 {
+					m.enqueueSelected()
+				}
+				if cmd, ok := m.playNextQueuedCmd(); ok {
+					return m, cmd
+				}
 				return m, nil
 			}
 			speaker.Lock()
@@ -156,7 +496,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			speaker.Unlock()
 			return m, nil
 
-		case key.Matches(msg, m.help.Keys().Loop):
+		case key.Matches(msg, m.help.Keys().Global.FocusNext):
+			m.focusNextPane()
+			return m, nil
+
+		case key.Matches(msg, m.help.Keys().Global.Loop):
 			if m.playing.Control.Ctrl == nil {
 				return m, nil
 			}
@@ -171,18 +515,49 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = nil
 			return m, nil
 
-		case key.Matches(msg, m.help.Keys().KeyHelp):
+		case key.Matches(msg, m.help.Keys().Global.KeyHelp):
 			m.help.ToggleShowHelp()
 			return m, nil
+		}
 
+		// Focused component hotkeys are handled after globals.
+		switch m.focus {
+		case focusQueue:
+			switch {
+			case key.Matches(msg, m.help.Keys().Queue.DequeueSelected):
+				m.dequeueSelected()
+				return m, nil
+			case key.Matches(msg, m.help.Keys().Queue.Down):
+				m.moveQueueCursor(1)
+				return m, nil
+			case key.Matches(msg, m.help.Keys().Queue.Up):
+				m.moveQueueCursor(-1)
+				return m, nil
+			default:
+				// Ignore unbound keys while queue is focused.
+				return m, nil
+			}
+		case focusTracks:
+			if key.Matches(msg, m.help.Keys().Tracks.QueueSelected) {
+				m.enqueueSelected()
+				return m, nil
+			}
+		}
+
+		if m.focus == focusQueue {
+			return m, nil
 		}
 	case errorMsg:
 		m.err = msg
 		return m, nil
 
 	case dirLoadedMsg:
-		m.loadingDirectory = false
+		m.tracks.loadingDirectory = false
 		return m, nil
+
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
 
 	case loadedTrackMsg:
 		speaker.Clear()
@@ -193,6 +568,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.playing = msg.track
+		m.playingPath = msg.path
 		m.playing.Control.Paused = false
 		m.err = nil
 
@@ -202,34 +578,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tickCmd()
 
 	case tickMsg:
-		if m.playing.Control.Ctrl == nil || m.playing.Control.Source == nil {
+		if !m.isPlaying() {
 			return m, nil
 		}
 		if !m.playing.Control.Loop && m.playing.Percent() >= 1.0 {
-			m.playing.Control.Paused = false
+			if cmd, ok := m.playNextQueuedCmd(); ok {
+				return m, cmd
+			}
+
+			if err := m.stopPlayback(); err != nil {
+				m.err = err
+			}
 			return m, nil
 		}
 		return m, tickCmd()
 
 	}
 
-	if keyMsg, ok := msg.(tea.KeyMsg); ok && m.loadingDirectory {
-		if key.Matches(keyMsg, m.filepicker.KeyMap.Open) ||
-			key.Matches(keyMsg, m.filepicker.KeyMap.Select) ||
-			key.Matches(keyMsg, m.filepicker.KeyMap.Back) {
-			return m, nil
-		}
-	}
-
-	prevDir := m.filepicker.CurrentDirectory
-	var cmd tea.Cmd
-	m.filepicker, cmd = m.filepicker.Update(msg)
-	if m.filepicker.CurrentDirectory != prevDir && cmd != nil {
-		m.loadingDirectory = true
-		cmd = tea.Sequence(cmd, func() tea.Msg { return dirLoadedMsg{} })
-	}
-
-	if didSelect, path := m.filepicker.DidSelectFile(msg); didSelect {
+	cmd, path, didSelect := m.tracks.Update(msg)
+	if didSelect {
 		if strings.HasSuffix(strings.ToLower(path), ".mp3") {
 			return m, m.playSongCmd(path)
 		}
@@ -252,7 +619,7 @@ func main() {
 	var sr beep.SampleRate = 48000
 
 	m := model{
-		filepicker: fp,
+		tracks:     newTracksComponent(fp),
 		sampleRate: sr,
 		help:       help.NewDefault(),
 	}
