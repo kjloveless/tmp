@@ -11,11 +11,19 @@ import (
 var DefaultKeyMap = KeyMap{
 	PlayPause: key.NewBinding(
 		key.WithKeys("p"),
-		key.WithHelp("p", "resume/pause"),
+		key.WithHelp("p", "play/pause"),
 	),
-	QueueCurrent: key.NewBinding(
+	QueueSelected: key.NewBinding(
 		key.WithKeys("q"),
-		key.WithHelp("q", "queue current"),
+		key.WithHelp("q", "queue selected"),
+	),
+	DequeueNext: key.NewBinding(
+		key.WithKeys("d"),
+		key.WithHelp("d", "dequeue selected"),
+	),
+	FocusNext: key.NewBinding(
+		key.WithKeys("tab"),
+		key.WithHelp("tab", "switch focus"),
 	),
 	Loop: key.NewBinding(
 		key.WithKeys("l"),
@@ -124,11 +132,13 @@ func (hu HelpUI) Keys() KeyMap {
 }
 
 type KeyMap struct {
-	PlayPause    key.Binding
-	QueueCurrent key.Binding
-	Loop         key.Binding
-	Quit         key.Binding
-	KeyHelp      key.Binding
+	PlayPause     key.Binding
+	QueueSelected key.Binding
+	DequeueNext   key.Binding
+	FocusNext     key.Binding
+	Loop          key.Binding
+	Quit          key.Binding
+	KeyHelp       key.Binding
 }
 type HelpUI struct {
 	model    help.Model
@@ -156,13 +166,15 @@ func NewDefault() HelpUI {
 }
 
 func (k KeyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.PlayPause, k.QueueCurrent, k.Loop, k.Quit, k.KeyHelp}
+	return []key.Binding{k.PlayPause, k.QueueSelected, k.DequeueNext, k.FocusNext, k.Loop, k.Quit, k.KeyHelp}
 }
 
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.PlayPause},
-		{k.QueueCurrent},
+		{k.QueueSelected},
+		{k.DequeueNext},
+		{k.FocusNext},
 		{k.Loop},
 		{k.Quit},
 		{k.KeyHelp},
