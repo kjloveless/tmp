@@ -3,7 +3,7 @@ package help
 import (
 	"testing"
 
-	"github.com/charmbracelet/bubbles/key"
+	"charm.land/bubbles/v2/key"
 )
 
 func TestNewHelpUIPanicsOnDuplicateScopeBindings(t *testing.T) {

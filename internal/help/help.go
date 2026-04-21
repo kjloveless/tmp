@@ -43,23 +43,48 @@ type KeyMap struct {
 }
 
 var DefaultKeyMap = KeyMap{
-	PlayPause: key.NewBinding(
-		key.WithKeys("p"),
-		key.WithHelp("p", "resume/pause"),
-	),
-	Loop: key.NewBinding(
-		key.WithKeys("l"),
-		key.WithHelp("l", "loop"),
-	),
-	Quit: key.NewBinding(
-		key.WithKeys("q", "ctrl+c"),
-		key.WithHelp("q/ctrl+c", "quit"),
-	),
-
-	KeyHelp: key.NewBinding(
-		key.WithKeys("?"),
-		key.WithHelp("?", "help"),
-	),
+	Global: GlobalKeyMap{
+		PlayPause: key.NewBinding(
+			key.WithKeys("p"),
+			key.WithHelp("p", "play/pause"),
+		),
+		FocusNext: key.NewBinding(
+			key.WithKeys("tab"),
+			key.WithHelp("tab", "switch focus"),
+		),
+		Loop: key.NewBinding(
+			key.WithKeys("l"),
+			key.WithHelp("l", "loop"),
+		),
+		Quit: key.NewBinding(
+			key.WithKeys("esc", "ctrl+c"),
+			key.WithHelp("esc/ctrl+c", "quit"),
+		),
+		KeyHelp: key.NewBinding(
+			key.WithKeys("?"),
+			key.WithHelp("?", "help"),
+		),
+	},
+	Tracks: TracksKeyMap{
+		QueueSelected: key.NewBinding(
+			key.WithKeys("q"),
+			key.WithHelp("q", "queue selected"),
+		),
+	},
+	Queue: QueueKeyMap{
+		DequeueSelected: key.NewBinding(
+			key.WithKeys("d"),
+			key.WithHelp("d", "dequeue selected"),
+		),
+		Up: key.NewBinding(
+			key.WithKeys("up", "k"),
+			key.WithHelp("↑/k", "move up"),
+		),
+		Down: key.NewBinding(
+			key.WithKeys("down", "j"),
+			key.WithHelp("↓/j", "move down"),
+		),
+	},
 }
 
 type Styles struct {
@@ -87,80 +112,6 @@ func DefaultStyles() Styles {
 	}
 }
 
-func (hu HelpUI) listEntries(s Styles) []string {
-	var out []string
-	for _, group := range hu.keys.FullHelp() {
-		for _, b := range group {
-			h := b.Help()
-			k := h.Key
-			d := h.Desc
-			if k == "" && d == "" {
-				continue
-			}
-			row := lipgloss.JoinHorizontal(
-				lipgloss.Left,
-				s.Key.Render(k),
-				s.Separator,
-				s.Desc.Render(d),
-			)
-			out = append(out, s.Row.Render(row))
-		}
-	}
-	return out
-}
-
-func (hu HelpUI) ListView() string {
-	s := DefaultStyles()
-
-	entries := hu.listEntries(s)
-	if len(entries) == 0 {
-		return ""
-	}
-
-	w := hu.model.Width()
-	if w <= 0 {
-		w = 80
-	}
-
-	half := (len(entries) + 1) / 2
-	left := entries[:half]
-	right := entries[half:]
-
-	colGap := 4
-	colWidth := (w - colGap - 2*s.Panel.GetHorizontalBorderSize() - 2*s.Panel.GetHorizontalPadding()) / 2
-	if colWidth < 20 {
-		body := lipgloss.NewStyle().Width(w).Render(strings.Join(entries, "\n"))
-		content := lipgloss.JoinVertical(lipgloss.Left, s.Title.Render("Keyboard shortcuts"), body)
-		return s.Panel.Width(w).Render(content)
-	}
-
-	leftCol := lipgloss.NewStyle().Width(colWidth).Render(strings.Join(left, "\n"))
-	rightCol := lipgloss.NewStyle().Width(colWidth).Render(strings.Join(right, "\n"))
-	rows := lipgloss.JoinHorizontal(lipgloss.Top, leftCol, strings.Repeat(" ", colGap), rightCol)
-
-	content := lipgloss.JoinVertical(
-		lipgloss.Left,
-		s.Title.Render("Keyboard shortcuts"),
-		rows,
-	)
-
-	return s.Panel.Width(w).Render(content)
-}
-
-func (hu HelpUI) View() string {
-	return hu.model.View(hu.keys)
-}
-
-func (hu HelpUI) Keys() KeyMap {
-	return hu.keys
-}
-
-type KeyMap struct {
-	PlayPause key.Binding
-	Loop      key.Binding
-	Quit      key.Binding
-	KeyHelp   key.Binding
-}
 type HelpUI struct {
 	model    help.Model
 	keys     KeyMap
@@ -215,24 +166,23 @@ func (hu HelpUI) contextualBindings(focus FocusArea) []key.Binding {
 	return bindings
 }
 
-func (k KeyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{
-		{k.PlayPause},
-		{k.Loop},
-		{k.Quit},
-		{k.KeyHelp},
+func (hu HelpUI) View(focus FocusArea) string {
+	short := hu.contextualBindings(focus)
+	full := make([][]key.Binding, 0, len(short))
+	for _, b := range short {
+		full = append(full, []key.Binding{b})
 	}
 	return hu.model.View(displayKeyMap{short: short, full: full})
 }
 
 func (hu HelpUI) ViewWithWidth(focus FocusArea, width int) string {
-	hu.model.Width = width
+	hu.model.SetWidth(width)
 	return hu.View(focus)
 }
 
 func (hu HelpUI) ListView(focus FocusArea) string {
 	s := DefaultStyles()
-	w := hu.model.Width
+	w := hu.model.Width()
 	if w <= 0 {
 		w = 80
 	}

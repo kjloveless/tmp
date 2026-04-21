@@ -12,6 +12,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/kjloveless/tmp/internal/help"
 	"github.com/kjloveless/tmp/internal/track"
 
@@ -266,7 +267,7 @@ func queueLine(width int, s string) string {
 
 func (m *model) queueViewWithWidth(width int) string {
 	queueStyle := queuePanelStyle(m.focus == focusQueue, width)
-	contentWidth := boundedWidth(width - queueStyle.GetHorizontalPadding())
+	contentWidth := boundedWidth(width - queueStyle.GetHorizontalFrameSize())
 
 	lines := []string{queueLine(contentWidth, "Queue")}
 	if m.playing.Title != "" {
@@ -314,15 +315,12 @@ type topPaneSizing struct {
 }
 
 func (m model) topPaneSizing() topPaneSizing {
-	trackBorderWidth := trackPanelStyle(m.focus == focusTracks).GetHorizontalBorderSize()
-	queueBorderWidth := queuePanelStyle(m.focus == focusQueue, queuePanelContentWidth).GetHorizontalBorderSize()
-
 	gap := queuePanelGap
-	if widthAfterBorders := m.windowWidth() - trackBorderWidth - queueBorderWidth; widthAfterBorders < gap {
-		gap = boundedWidth(widthAfterBorders)
+	if m.windowWidth() < gap {
+		gap = boundedWidth(m.windowWidth())
 	}
 
-	availableWidth := boundedWidth(m.windowWidth() - trackBorderWidth - queueBorderWidth - gap)
+	availableWidth := boundedWidth(m.windowWidth() - gap)
 	queueWidth := queuePanelContentWidth
 	if availableWidth < minLeftPaneWidth+queueWidth {
 		queueWidth = availableWidth - minLeftPaneWidth
@@ -342,7 +340,7 @@ func (m model) topPaneSizing() topPaneSizing {
 }
 
 func (m model) playerHelpPanelWidth() int {
-	width := m.windowWidth() - playerHelpPanelStyle().GetHorizontalBorderSize()
+	width := m.windowWidth()
 	if width < minLeftPaneWidth {
 		return minLeftPaneWidth
 	}
@@ -350,7 +348,7 @@ func (m model) playerHelpPanelWidth() int {
 }
 
 func (m model) playerHelpContentWidth() int {
-	width := m.playerHelpPanelWidth() - playerHelpPanelStyle().GetHorizontalPadding()
+	width := m.playerHelpPanelWidth() - playerHelpPanelStyle().GetHorizontalFrameSize()
 	if width < minLeftPaneWidth {
 		return minLeftPaneWidth
 	}
@@ -391,16 +389,9 @@ func (m model) Init() tea.Cmd {
 	return m.tracks.Init()
 }
 
-func (m model) View() tea.View {
-	var builder strings.Builder
-
-	if m.help.GetshowHelp() {
-		var b strings.Builder
-		b.WriteString("Help — press ? to close\n\n")
-		b.WriteString(m.help.ListView())
-		v := tea.NewView(b.String())
-		v.AltScreen = true
-		return v
+func (m model) helpFocus() help.FocusArea {
+	if m.focus == focusQueue {
+		return help.FocusQueue
 	}
 	return help.FocusTracks
 }
@@ -425,9 +416,60 @@ func (m model) playerHelpView() string {
 	} else {
 		lines = append(lines, statusStyle.Render("Select an MP3 file to play."))
 	}
-	helpView := m.help.View()
-	builder.WriteString("\n" + helpView)
-	v := tea.NewView(builder.String())
+
+	if helpView := m.help.ViewWithWidth(m.helpFocus(), contentWidth); helpView != "" {
+		lines = append(lines, helpView)
+	}
+
+	return playerHelpPanelStyle().
+		Width(m.playerHelpPanelWidth()).
+		Render(truncateBlock(strings.Join(lines, "\n"), contentWidth))
+}
+
+func (m model) topPaneHeight(bottom string) int {
+	height := m.windowHeight() - lipgloss.Height(bottom)
+	if height < minTopPaneHeight {
+		return minTopPaneHeight
+	}
+	return height
+}
+
+func (m model) tracksViewHeight(topHeight int) int {
+	height := topHeight - trackPanelStyle(m.focus == focusTracks).GetVerticalFrameSize() - 1
+	if height < 0 {
+		return 0
+	}
+	return height
+}
+
+func (m model) render() string {
+	if m.help.GetshowHelp() {
+		var b strings.Builder
+		b.WriteString("Help — press ? to close\n\n")
+		b.WriteString(m.help.ListView(m.helpFocus()))
+		return b.String()
+	}
+	bottom := m.playerHelpView()
+	topHeight := m.topPaneHeight(bottom)
+
+	sizing := m.topPaneSizing()
+	queue := m.queueViewWithWidth(sizing.queueWidth)
+	trackStyle := trackPanelStyle(m.focus == focusTracks)
+	leftContentWidth := boundedWidth(sizing.leftWidth - trackStyle.GetHorizontalFrameSize())
+	var leftPane strings.Builder
+	leftPane.WriteString(m.tracks.ViewWithHeight(m.tracksViewHeight(topHeight)))
+	left := trackStyle.
+		Width(sizing.leftWidth).
+		Render(truncateBlock(leftPane.String(), leftContentWidth))
+
+	top := lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", sizing.gap), queue)
+	top = truncateBlock(top, m.windowWidth())
+	top = truncateBlockHeight(top, topHeight)
+	return lipgloss.JoinVertical(lipgloss.Left, top, bottom)
+}
+
+func (m model) View() tea.View {
+	v := tea.NewView(m.render())
 	v.AltScreen = true
 	return v
 }
@@ -546,10 +588,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 
-	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && m.loadingDirectory {
-		if key.Matches(keyMsg, m.filepicker.KeyMap.Open) ||
-			key.Matches(keyMsg, m.filepicker.KeyMap.Select) ||
-			key.Matches(keyMsg, m.filepicker.KeyMap.Back) {
+			if err := m.stopPlayback(); err != nil {
+				m.err = err
+			}
 			return m, nil
 		}
 		return m, tickCmd()

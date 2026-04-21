@@ -6,9 +6,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/filepicker"
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/filepicker"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 )
 
 type tracksComponent struct {
@@ -169,9 +169,9 @@ func (tc *tracksComponent) syncSelection(msg tea.Msg, previousDirectory string) 
 	case key.Matches(keyMsg, tc.picker.KeyMap.Up):
 		tc.selected--
 	case key.Matches(keyMsg, tc.picker.KeyMap.PageDown):
-		tc.selected += tc.picker.Height
+		tc.selected += tc.picker.Height()
 	case key.Matches(keyMsg, tc.picker.KeyMap.PageUp):
-		tc.selected -= tc.picker.Height
+		tc.selected -= tc.picker.Height()
 	}
 	tc.clampSelected()
 }

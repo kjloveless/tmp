@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/filepicker"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/filepicker"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/gopxl/beep/v2"
 	"github.com/kjloveless/tmp/internal/help"
@@ -48,6 +48,15 @@ func (s *testStream) Close() error {
 	return nil
 }
 
+func keyPress(text string) tea.KeyPressMsg {
+	runes := []rune(text)
+	return tea.KeyPressMsg(tea.Key{Text: text, Code: runes[0]})
+}
+
+func keyPressCode(code rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg(tea.Key{Code: code})
+}
+
 func TestEnqueueSelectedQueuesHighlightedFile(t *testing.T) {
 	dir := t.TempDir()
 	playingPath := filepath.Join(dir, "a.mp3")
@@ -68,7 +77,7 @@ func TestEnqueueSelectedQueuesHighlightedFile(t *testing.T) {
 		playing:     track.Track{Title: filepath.Base(playingPath)},
 		playingPath: playingPath,
 	}
-	m.tracks.syncSelection(tea.KeyMsg{Type: tea.KeyDown}, fp.CurrentDirectory)
+	m.tracks.syncSelection(keyPressCode(tea.KeyDown), fp.CurrentDirectory)
 	m.enqueueSelected()
 
 	if len(m.queue) != 1 {
@@ -97,7 +106,7 @@ func TestQueueSelectedOnlyQueuesWhenIdle(t *testing.T) {
 		tracks: newTracksComponent(fp),
 		help:   help.NewDefault(),
 	}
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	updated, cmd := m.Update(keyPress("q"))
 	got := updated.(model)
 
 	if cmd != nil {
@@ -120,7 +129,7 @@ func TestPlayPauseStartsQueuedTrackWhenIdle(t *testing.T) {
 		}},
 	}
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
+	updated, cmd := m.Update(keyPress("p"))
 	got := updated.(model)
 
 	if cmd == nil {
@@ -146,7 +155,7 @@ func TestPlayPauseQueuesAndStartsSelectedTrackWhenIdleQueueEmpty(t *testing.T) {
 		tracks: newTracksComponent(fp),
 		help:   help.NewDefault(),
 	}
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
+	updated, cmd := m.Update(keyPress("p"))
 	got := updated.(model)
 
 	if cmd == nil {
@@ -180,10 +189,10 @@ func TestQueueFocusDequeueKeyRemovesFirstQueuedTrackByDefault(t *testing.T) {
 		},
 	}
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	updated, _ := m.Update(keyPressCode(tea.KeyTab))
 	focused := updated.(model)
 
-	updated, cmd := focused.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	updated, cmd := focused.Update(keyPress("d"))
 	got := updated.(model)
 
 	if cmd != nil {
@@ -207,19 +216,19 @@ func TestQueueFocusDequeueRemovesSelectedQueuedTrack(t *testing.T) {
 		},
 	}
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	updated, _ := m.Update(keyPressCode(tea.KeyTab))
 	focused := updated.(model)
 	if focused.focus != focusQueue {
 		t.Fatalf("focus = %v, want queue focus", focused.focus)
 	}
 
-	updated, _ = focused.Update(tea.KeyMsg{Type: tea.KeyDown})
+	updated, _ = focused.Update(keyPressCode(tea.KeyDown))
 	selected := updated.(model)
 	if selected.queueCursor != 1 {
 		t.Fatalf("queue cursor = %d, want 1", selected.queueCursor)
 	}
 
-	updated, cmd := selected.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	updated, cmd := selected.Update(keyPress("d"))
 	got := updated.(model)
 	if cmd != nil {
 		t.Fatal("dequeue selected returned command, want nil")
@@ -240,7 +249,7 @@ func TestFocusNextIgnoresEmptyQueue(t *testing.T) {
 		help: help.NewDefault(),
 	}
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	updated, cmd := m.Update(keyPressCode(tea.KeyTab))
 	got := updated.(model)
 
 	if cmd != nil {
@@ -263,7 +272,7 @@ func TestDequeueLastTrackReturnsFocusToTracks(t *testing.T) {
 		},
 	}
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	updated, _ := m.Update(keyPress("d"))
 	got := updated.(model)
 
 	if len(got.queue) != 0 {
@@ -334,7 +343,7 @@ func TestViewFitsWithinWindowHeight(t *testing.T) {
 	)
 	fp := filepicker.New()
 	fp.AutoHeight = false
-	fp.Height = height
+	fp.SetHeight(height)
 
 	m := model{
 		width:  width,
@@ -343,11 +352,11 @@ func TestViewFitsWithinWindowHeight(t *testing.T) {
 		help:   help.NewDefault(),
 	}
 
-	got := m.View()
+	got := m.render()
 	if gotHeight := lipgloss.Height(got); gotHeight > height {
 		t.Fatalf("view height = %d, want <= %d", gotHeight, height)
 	}
-	if !strings.HasPrefix(got, "╭") {
+	if !strings.HasPrefix(ansi.Strip(got), "╭") {
 		t.Fatalf("view should start with top border, got %q", strings.Split(got, "\n")[0])
 	}
 
@@ -356,7 +365,7 @@ func TestViewFitsWithinWindowHeight(t *testing.T) {
 	lines := strings.Split(got, "\n")
 	hasTrackBottomBorder := false
 	for _, line := range lines[:min(topHeight, len(lines))] {
-		if strings.HasPrefix(line, "╰") {
+		if strings.HasPrefix(ansi.Strip(line), "╰") {
 			hasTrackBottomBorder = true
 			break
 		}
@@ -383,7 +392,7 @@ func TestViewFitsWithinWindowWidthWithQueue(t *testing.T) {
 			},
 		}
 
-		got := m.View()
+		got := m.render()
 		if gotWidth := lipgloss.Width(got); gotWidth > width {
 			t.Fatalf("view width = %d, want <= %d", gotWidth, width)
 		}
@@ -393,7 +402,7 @@ func TestViewFitsWithinWindowWidthWithQueue(t *testing.T) {
 			}
 		}
 
-		firstLine := ansi.Strip(strings.Split(got, "\n")[0])
+		firstLine := strings.TrimRight(ansi.Strip(strings.Split(got, "\n")[0]), " ")
 		if !strings.HasSuffix(firstLine, "╮") {
 			t.Fatalf("queue panel top border should be visible at right edge for width %d, got %q", width, firstLine)
 		}
