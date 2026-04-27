@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/bubbles/v2/filepicker"
@@ -80,6 +82,7 @@ type model struct {
 	help        help.HelpUI
 	width       int
 	height      int
+	meter       *audioMeter
 	err         error
 }
 
@@ -100,6 +103,117 @@ type (
 type tickMsg time.Time
 type dirLoadedMsg struct{}
 
+type audioMeter struct {
+	mu    sync.RWMutex
+	bins  []float64
+	level float64
+}
+
+func newAudioMeter(binCount int) *audioMeter {
+	if binCount < 8 {
+		binCount = 8
+	}
+	return &audioMeter{
+		bins: make([]float64, binCount),
+	}
+}
+
+func (m *audioMeter) Reset() {
+	m.mu.Lock()
+	for i := range m.bins {
+		m.bins[i] = 0
+	}
+	m.level = 0
+	m.mu.Unlock()
+}
+
+func (m *audioMeter) Process(samples [][2]float64) {
+	if len(samples) == 0 {
+		return
+	}
+
+	levels := make([]float64, len(m.bins))
+	var power float64
+
+	for i, sample := range samples {
+		mono := (sample[0] + sample[1]) / 2
+		abs := math.Abs(mono)
+		power += mono * mono
+
+		bin := i * len(levels) / len(samples)
+		if abs > levels[bin] {
+			levels[bin] = abs
+		}
+	}
+
+	rms := math.Sqrt(power / float64(len(samples)))
+
+	m.mu.Lock()
+	for i, v := range levels {
+		boosted := math.Min(v*1.8, 1.0)
+		decay := m.bins[i] * 0.80
+		if boosted > decay {
+			m.bins[i] = boosted
+		} else {
+			m.bins[i] = decay
+		}
+	}
+
+	peakLevel := math.Min(rms*2.8, 1.0)
+	if peakLevel > m.level {
+		m.level = peakLevel
+	} else {
+		m.level *= 0.85
+	}
+	m.mu.Unlock()
+}
+
+func (m *audioMeter) Bins(width int) []float64 {
+	if width <= 0 {
+		return nil
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if len(m.bins) == 0 {
+		return make([]float64, width)
+	}
+
+	out := make([]float64, width)
+	for i := 0; i < width; i++ {
+		src := int(float64(i) * float64(len(m.bins)) / float64(width))
+		if src >= len(m.bins) {
+			src = len(m.bins) - 1
+		}
+		out[i] = m.bins[src]
+	}
+	return out
+}
+
+type meteredStreamer struct {
+	streamer beep.Streamer
+	meter    *audioMeter
+}
+
+func (s meteredStreamer) Stream(samples [][2]float64) (int, bool) {
+	n, ok := s.streamer.Stream(samples)
+	if n > 0 && s.meter != nil {
+		s.meter.Process(samples[:n])
+	}
+	return n, ok
+}
+
+func (m *model) visualizerStreamer(streamer beep.Streamer) beep.Streamer {
+	if m.meter == nil {
+		return streamer
+	}
+	return meteredStreamer{
+		streamer: streamer,
+		meter:    m.meter,
+	}
+}
+
 func (m *model) updatePlaybackLoop() error {
 	if m.playing.Control.Ctrl == nil || m.playing.Control.Source == nil {
 		return nil
@@ -117,7 +231,7 @@ func (m *model) updatePlaybackLoop() error {
 	}
 
 	speaker.Lock()
-	m.playing.Control.Streamer = streamer
+	m.playing.Control.Streamer = m.visualizerStreamer(streamer)
 	speaker.Unlock()
 
 	return nil
@@ -166,6 +280,9 @@ func (m *model) stopPlayback() error {
 	err := m.playing.Control.Source.Close()
 	m.playing = track.Track{}
 	m.playingPath = ""
+	if m.meter != nil {
+		m.meter.Reset()
+	}
 	return err
 }
 
@@ -468,6 +585,7 @@ func (m model) playerHelpView() string {
 		}
 		lines = append(lines, statusStyle.Render(statusText))
 		lines = append(lines, statusStyle.Render(m.playing.String()))
+		lines = append(lines, statusStyle.Render(m.visualizerView(contentWidth-2)))
 	} else {
 		statusText := "Select an MP3 file to play."
 		if m.loopMode != loopOff {
@@ -483,6 +601,38 @@ func (m model) playerHelpView() string {
 	return playerHelpPanelStyle().
 		Width(m.playerHelpPanelWidth()).
 		Render(truncateBlock(strings.Join(lines, "\n"), contentWidth))
+}
+
+func (m model) visualizerView(width int) string {
+	if width < 12 {
+		return "▁▂▃▄▅▆▇█"
+	}
+
+	levels := []rune("▁▂▃▄▅▆▇█")
+	values := make([]float64, width)
+	if m.meter != nil {
+		values = m.meter.Bins(width)
+	}
+
+	var b strings.Builder
+	b.Grow(width)
+	for _, normalized := range values {
+		level := int(math.Round(normalized * float64(len(levels)-1)))
+		level = max(0, min(level, len(levels)-1))
+		color := lipgloss.Color("#89b4fa")
+		switch {
+		case normalized > 0.75:
+			color = lipgloss.Color("#f5c2e7")
+		case normalized > 0.55:
+			color = lipgloss.Color("#a6e3a1")
+		case normalized > 0.35:
+			color = lipgloss.Color("#f9e2af")
+		}
+
+		b.WriteString(lipgloss.NewStyle().Foreground(color).Render(string(levels[level])))
+	}
+
+	return "Visualizer " + b.String()
 }
 
 func (m model) topPaneHeight(bottom string) int {
@@ -626,6 +776,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.playingPath = msg.path
 		m.playing.Control.Paused = false
 		m.err = nil
+		if m.meter != nil {
+			m.meter.Reset()
+		}
 
 		if err := m.updatePlaybackLoop(); err != nil {
 			m.err = err
@@ -685,6 +838,7 @@ func main() {
 		tracks:     newTracksComponent(fp),
 		sampleRate: sr,
 		help:       help.NewDefault(),
+		meter:      newAudioMeter(96),
 	}
 
 	speaker.Init(m.sampleRate, m.sampleRate.N(time.Second/10))
