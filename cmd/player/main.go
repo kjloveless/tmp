@@ -24,6 +24,7 @@ import (
 	"github.com/gopxl/beep/v2/effects"
 	"github.com/gopxl/beep/v2/mp3"
 	"github.com/gopxl/beep/v2/speaker"
+	"github.com/gopxl/beep/v2/wav"
 )
 
 const (
@@ -135,6 +136,20 @@ type audioMeter struct {
 type namedBandLevel struct {
 	Label string
 	Value float64
+}
+
+func supportedAudioExtensions() []string {
+	return []string{".mp3", ".wav"}
+}
+
+func isSupportedAudioFile(path string) bool {
+	lower := strings.ToLower(path)
+	for _, ext := range supportedAudioExtensions() {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 func newAudioMeter(binCount int) *audioMeter {
@@ -607,7 +622,19 @@ func (m *model) playSongCmdWithPrevious(path string, previous beep.StreamSeekClo
 		if err != nil {
 			return errorMsg(fmt.Errorf("open %s: %w", filepath.Base(path), err))
 		}
-		streamer, format, err := mp3.Decode(f)
+
+		var (
+			streamer beep.StreamSeekCloser
+			format   beep.Format
+		)
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".mp3":
+			streamer, format, err = mp3.Decode(f)
+		case ".wav":
+			streamer, format, err = wav.Decode(f)
+		default:
+			err = fmt.Errorf("unsupported audio format: %s", filepath.Ext(path))
+		}
 		if err != nil {
 			_ = f.Close()
 			return errorMsg(fmt.Errorf("decode %s: %w", filepath.Base(path), err))
@@ -836,6 +863,50 @@ func wrapQueueItem(prefix, title string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
+func appendQueueBlock(lines *[]string, block string) (start, end int) {
+	start = len(*lines)
+	*lines = append(*lines, strings.Split(block, "\n")...)
+	end = len(*lines)
+	return start, end
+}
+
+func queueViewport(lines []string, contentHeight, selectedStart, selectedEnd int) []string {
+	if contentHeight < 0 || len(lines) <= contentHeight {
+		return lines
+	}
+
+	if selectedStart < 0 {
+		selectedStart = 0
+		selectedEnd = 0
+	}
+	if selectedEnd < selectedStart {
+		selectedEnd = selectedStart
+	}
+
+	start := 0
+	if selectedEnd > contentHeight {
+		start = selectedEnd - contentHeight
+	}
+	if selectedStart < start {
+		start = selectedStart
+	}
+
+	maxStart := len(lines) - contentHeight
+	if start > maxStart {
+		start = maxStart
+	}
+	if start < 0 {
+		start = 0
+	}
+
+	end := start + contentHeight
+	if end > len(lines) {
+		end = len(lines)
+	}
+
+	return lines[start:end]
+}
+
 func (m *model) queueViewWithWidth(width int) string {
 	return m.queueViewWithSize(width, -1)
 }
@@ -845,12 +916,10 @@ func (m *model) queueViewWithSize(width, contentHeight int) string {
 	contentWidth := boundedWidth(width - queueStyle.GetHorizontalFrameSize())
 
 	lines := []string{fmt.Sprintf("Queue (%d)", len(m.queue))}
+	selectedStart, selectedEnd := -1, -1
 	if m.playing.Title != "" {
-		lines = append(lines,
-			"",
-			"Playing",
-			wrapQueueItem("  ", m.playing.Title, contentWidth),
-		)
+		lines = append(lines, "", "Playing")
+		appendQueueBlock(&lines, wrapQueueItem("  ", m.playing.Title, contentWidth))
 	}
 
 	lines = append(lines, "", "Up Next")
@@ -860,23 +929,23 @@ func (m *model) queueViewWithSize(width, contentHeight int) string {
 		for i, item := range m.queue {
 			prefix := "  "
 			if m.focus == focusQueue && i == m.queueCursor {
-				prefix = "> "
+				prefix = "› "
 			}
-			lines = append(lines, wrapQueueItem(fmt.Sprintf("%s%d. ", prefix, i+1), item.title, contentWidth))
+			start, end := appendQueueBlock(&lines, wrapQueueItem(fmt.Sprintf("%s%d. ", prefix, i+1), item.title, contentWidth))
+			if m.focus == focusQueue && i == m.queueCursor {
+				selectedStart, selectedEnd = start, end
+			}
 		}
 	}
 
-	content := strings.Join(lines, "\n")
-	content = lipgloss.NewStyle().
-		Width(contentWidth).
-		Render(content)
 	if contentHeight >= 0 {
-		content = truncateBlockHeight(content, contentHeight)
-		content = lipgloss.NewStyle().
-			Width(contentWidth).
-			Height(contentHeight).
-			Render(content)
+		lines = queueViewport(lines, contentHeight, selectedStart, selectedEnd)
 	}
+
+	content := lipgloss.NewStyle().
+		Width(contentWidth).
+		Height(max(contentHeight, len(lines))).
+		Render(strings.Join(lines, "\n"))
 
 	return queueStyle.Render(content)
 }
@@ -1096,7 +1165,7 @@ func (m model) playerHelpView() string {
 		lines = append(lines, statusStyle.Render(m.playing.String()))
 		lines = append(lines, statusStyle.Render(m.playbackMeta()))
 	} else {
-		statusText := "Select an MP3 file to play."
+		statusText := "Select an audio file to play."
 		lines = append(lines, statusStyle.Render(statusText))
 		lines = append(lines, statusStyle.Render(m.playbackMeta()))
 	}
@@ -1179,6 +1248,12 @@ func (m model) tracksViewHeight(topHeight int) int {
 		return 0
 	}
 	return height
+}
+
+func (m *model) syncTracksViewportHeight() {
+	bottom := m.playerHelpView()
+	topHeight := m.topPaneHeight(bottom)
+	m.tracks.setHeight(m.tracksViewHeight(topHeight))
 }
 
 func (m model) render() string {
@@ -1395,9 +1470,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	}
 
+	m.syncTracksViewportHeight()
 	cmd, path, didSelect := m.tracks.Update(msg)
 	if didSelect {
-		if strings.HasSuffix(strings.ToLower(path), ".mp3") {
+		if isSupportedAudioFile(path) {
 			return m, m.playSongCmd(path)
 		}
 	}
@@ -1413,7 +1489,7 @@ func main() {
 		log.Fatalf("Directory does not exist: %s", initPath)
 	}
 	fp := filepicker.New()
-	fp.AllowedTypes = []string{".mp3"}
+	fp.AllowedTypes = supportedAudioExtensions()
 	fp.CurrentDirectory = initPath
 
 	var sr beep.SampleRate = 48000

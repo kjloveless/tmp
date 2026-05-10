@@ -13,8 +13,6 @@ import (
 
 type tracksComponent struct {
 	picker           filepicker.Model
-	selected         int
-	stack            []int
 	loadingDirectory bool
 }
 
@@ -31,12 +29,16 @@ func (tc tracksComponent) View() string {
 }
 
 func (tc tracksComponent) ViewWithHeight(height int) string {
+	tc.setHeight(height)
+	return tc.picker.View()
+}
+
+func (tc *tracksComponent) setHeight(height int) {
 	if height < 0 {
 		height = 0
 	}
 	tc.picker.AutoHeight = false
 	tc.picker.SetHeight(height)
-	return tc.picker.View()
 }
 
 func (tc tracksComponent) pickerEntries() ([]os.DirEntry, error) {
@@ -101,79 +103,42 @@ func isDirectory(entry os.DirEntry, path string) bool {
 }
 
 func (tc tracksComponent) selectedFilePath() (string, bool) {
-	entries, err := tc.pickerEntries()
-	if err != nil || len(entries) == 0 || tc.selected < 0 || tc.selected >= len(entries) {
+	path := tc.picker.HighlightedPath()
+	if path == "" {
 		return "", false
 	}
 
-	entry := entries[tc.selected]
-	path := filepath.Join(tc.picker.CurrentDirectory, entry.Name())
-	if isDirectory(entry, path) || !tc.canSelectPath(path) {
+	entry, err := os.Stat(path)
+	if err != nil {
+		return "", false
+	}
+	if entry.IsDir() || !tc.canSelectPath(path) {
 		return "", false
 	}
 	return path, true
 }
 
-func (tc *tracksComponent) clampSelected() {
-	entries, err := tc.pickerEntries()
-	if err != nil || len(entries) == 0 {
-		tc.selected = 0
-		return
+func (tc tracksComponent) selectedDirectoryPath() (string, bool) {
+	path := tc.picker.HighlightedPath()
+	if path == "" {
+		return "", false
 	}
-
-	switch {
-	case tc.selected < 0:
-		tc.selected = 0
-	case tc.selected >= len(entries):
-		tc.selected = len(entries) - 1
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", false
 	}
+	if !info.IsDir() {
+		return "", false
+	}
+	return path, true
 }
 
-func (tc *tracksComponent) syncSelection(msg tea.Msg, previousDirectory string) {
-	keyMsg, ok := msg.(tea.KeyMsg)
-	if !ok {
-		tc.clampSelected()
-		return
+func (tc tracksComponent) selectedPath() (string, bool) {
+	path := tc.picker.HighlightedPath()
+	if path == "" {
+		return "", false
 	}
-
-	if tc.picker.CurrentDirectory != previousDirectory {
-		if key.Matches(keyMsg, tc.picker.KeyMap.Back) {
-			if len(tc.stack) > 0 {
-				last := len(tc.stack) - 1
-				tc.selected = tc.stack[last]
-				tc.stack = tc.stack[:last]
-			} else {
-				tc.selected = 0
-			}
-		} else {
-			tc.stack = append(tc.stack, tc.selected)
-			tc.selected = 0
-		}
-		tc.clampSelected()
-		return
-	}
-
-	entries, err := tc.pickerEntries()
-	if err != nil || len(entries) == 0 {
-		tc.selected = 0
-		return
-	}
-
-	switch {
-	case key.Matches(keyMsg, tc.picker.KeyMap.GoToTop):
-		tc.selected = 0
-	case key.Matches(keyMsg, tc.picker.KeyMap.GoToLast):
-		tc.selected = len(entries) - 1
-	case key.Matches(keyMsg, tc.picker.KeyMap.Down):
-		tc.selected++
-	case key.Matches(keyMsg, tc.picker.KeyMap.Up):
-		tc.selected--
-	case key.Matches(keyMsg, tc.picker.KeyMap.PageDown):
-		tc.selected += tc.picker.Height()
-	case key.Matches(keyMsg, tc.picker.KeyMap.PageUp):
-		tc.selected -= tc.picker.Height()
-	}
-	tc.clampSelected()
+	return path, true
 }
 
 func (tc *tracksComponent) Update(msg tea.Msg) (tea.Cmd, string, bool) {
@@ -185,13 +150,16 @@ func (tc *tracksComponent) Update(msg tea.Msg) (tea.Cmd, string, bool) {
 		}
 	}
 
-	prevDir := tc.picker.CurrentDirectory
 	var cmd tea.Cmd
 	tc.picker, cmd = tc.picker.Update(msg)
-	tc.syncSelection(msg, prevDir)
-	if tc.picker.CurrentDirectory != prevDir && cmd != nil {
-		tc.loadingDirectory = true
-		cmd = tea.Sequence(cmd, func() tea.Msg { return dirLoadedMsg{} })
+	if _, ok := msg.(tea.WindowSizeMsg); ok {
+		return cmd, "", false
+	}
+	if cmd != nil {
+		if _, ok := msg.(tea.KeyMsg); ok {
+			tc.loadingDirectory = true
+			cmd = tea.Sequence(cmd, func() tea.Msg { return dirLoadedMsg{} })
+		}
 	}
 
 	didSelect, path := tc.picker.DidSelectFile(msg)

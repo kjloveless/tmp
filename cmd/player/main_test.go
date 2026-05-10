@@ -57,6 +57,15 @@ func keyPressCode(code rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg(tea.Key{Code: code})
 }
 
+func loadTracks(t *testing.T, tc *tracksComponent) {
+	t.Helper()
+	cmd := tc.Init()
+	if cmd == nil {
+		return
+	}
+	_, _, _ = tc.Update(cmd())
+}
+
 func TestLoopModeKeyCyclesOffCurrentQueue(t *testing.T) {
 	m := model{
 		help: help.NewDefault(),
@@ -88,14 +97,16 @@ func TestEnqueueSelectedQueuesHighlightedFile(t *testing.T) {
 
 	fp := filepicker.New()
 	fp.CurrentDirectory = dir
-	fp.AllowedTypes = []string{".mp3"}
+	fp.AllowedTypes = supportedAudioExtensions()
 
 	m := model{
 		tracks:      newTracksComponent(fp),
 		playing:     track.Track{Title: filepath.Base(playingPath)},
 		playingPath: playingPath,
 	}
-	m.tracks.syncSelection(keyPressCode(tea.KeyDown), fp.CurrentDirectory)
+	loadTracks(t, &m.tracks)
+	m.tracks.setHeight(10)
+	_, _, _ = m.tracks.Update(keyPressCode(tea.KeyDown))
 	m.enqueueSelected()
 
 	if len(m.queue) != 1 {
@@ -118,12 +129,13 @@ func TestQueueSelectedOnlyQueuesWhenIdle(t *testing.T) {
 
 	fp := filepicker.New()
 	fp.CurrentDirectory = dir
-	fp.AllowedTypes = []string{".mp3"}
+	fp.AllowedTypes = supportedAudioExtensions()
 
 	m := model{
 		tracks: newTracksComponent(fp),
 		help:   help.NewDefault(),
 	}
+	loadTracks(t, &m.tracks)
 	updated, cmd := m.Update(keyPress("q"))
 	got := updated.(model)
 
@@ -167,12 +179,13 @@ func TestPlayPauseQueuesAndStartsSelectedTrackWhenIdleQueueEmpty(t *testing.T) {
 
 	fp := filepicker.New()
 	fp.CurrentDirectory = dir
-	fp.AllowedTypes = []string{".mp3"}
+	fp.AllowedTypes = supportedAudioExtensions()
 
 	m := model{
 		tracks: newTracksComponent(fp),
 		help:   help.NewDefault(),
 	}
+	loadTracks(t, &m.tracks)
 	updated, cmd := m.Update(keyPress("p"))
 	got := updated.(model)
 
@@ -191,6 +204,50 @@ func TestPlayPauseQueuesAndStartsSelectedTrackWhenIdleQueueEmpty(t *testing.T) {
 	t.Cleanup(func() {
 		if err := loaded.track.Control.Source.Close(); err != nil {
 			t.Fatalf("close loaded track: %v", err)
+		}
+	})
+	if loaded.path != selectedPath {
+		t.Fatalf("loaded path = %q, want %q", loaded.path, selectedPath)
+	}
+}
+
+func TestPlayPauseStartsSelectedWAVTrackWhenIdleQueueEmpty(t *testing.T) {
+	dir, err := filepath.Abs("../../sounds/wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fp := filepicker.New()
+	fp.CurrentDirectory = dir
+	fp.AllowedTypes = supportedAudioExtensions()
+
+	m := model{
+		tracks: newTracksComponent(fp),
+		help:   help.NewDefault(),
+	}
+	loadTracks(t, &m.tracks)
+	selectedPath, ok := m.tracks.selectedFilePath()
+	if !ok {
+		t.Fatal("no initial wav selection available")
+	}
+	updated, cmd := m.Update(keyPress("p"))
+	got := updated.(model)
+
+	if cmd == nil {
+		t.Fatal("play/pause with empty queue returned nil command for wav, want selected-track playback command")
+	}
+	if len(got.queue) != 0 {
+		t.Fatalf("queue length = %d, want 0 after starting selected wav track", len(got.queue))
+	}
+
+	msg := cmd()
+	loaded, ok := msg.(loadedTrackMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want loadedTrackMsg", msg)
+	}
+	t.Cleanup(func() {
+		if err := loaded.track.Control.Source.Close(); err != nil {
+			t.Fatalf("close loaded wav track: %v", err)
 		}
 	})
 	if loaded.path != selectedPath {
@@ -345,6 +402,31 @@ func TestQueueViewWithSizeKeepsFixedHeightWhileWrappingItems(t *testing.T) {
 	}
 }
 
+func TestQueueViewWithSizeKeepsSelectedItemVisible(t *testing.T) {
+	const (
+		width         = queuePanelContentWidth
+		contentHeight = 5
+	)
+
+	m := &model{
+		focus:       focusQueue,
+		queueCursor: 2,
+		queue: []queuedTrack{
+			{path: "one.mp3", title: strings.Repeat("first entry ", 5)},
+			{path: "two.mp3", title: strings.Repeat("second entry ", 5)},
+			{path: "three.mp3", title: "selected target"},
+		},
+	}
+
+	got := ansi.Strip(m.queueViewWithSize(width, contentHeight))
+	if !strings.Contains(got, "› 3. selected target") {
+		t.Fatalf("queue viewport = %q, want selected entry visible", got)
+	}
+	if strings.Contains(got, "1. first entry") && strings.Contains(got, "2. second entry") {
+		t.Fatalf("queue viewport = %q, want earlier wrapped entries clipped to keep selection visible", got)
+	}
+}
+
 func TestTruncateBlockKeepsEveryLineWithinWidth(t *testing.T) {
 	const width = 10
 	got := truncateBlock("short\n"+strings.Repeat("x", width*2), width)
@@ -367,7 +449,7 @@ func TestPlayerHelpViewSpansWindowWidth(t *testing.T) {
 	if gotWidth := lipgloss.Width(got); gotWidth != width {
 		t.Fatalf("player/help panel width = %d, want %d", gotWidth, width)
 	}
-	if !strings.Contains(got, "Select an MP3 file to play.") {
+	if !strings.Contains(got, "Select an audio file to play.") {
 		t.Fatal("player/help panel does not include idle player status")
 	}
 	if !strings.Contains(got, "vol 100%") {
