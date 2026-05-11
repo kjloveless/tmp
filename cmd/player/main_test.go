@@ -57,6 +57,15 @@ func keyPressCode(code rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg(tea.Key{Code: code})
 }
 
+func loadTracks(t *testing.T, tc *tracksComponent) {
+	t.Helper()
+	cmd := tc.Init()
+	if cmd == nil {
+		return
+	}
+	_, _, _ = tc.Update(cmd())
+}
+
 func TestLoopModeKeyCyclesOffCurrentQueue(t *testing.T) {
 	m := model{
 		help: help.NewDefault(),
@@ -88,14 +97,16 @@ func TestEnqueueSelectedQueuesHighlightedFile(t *testing.T) {
 
 	fp := filepicker.New()
 	fp.CurrentDirectory = dir
-	fp.AllowedTypes = []string{".mp3"}
+	fp.AllowedTypes = supportedAudioExtensions()
 
 	m := model{
 		tracks:      newTracksComponent(fp),
 		playing:     track.Track{Title: filepath.Base(playingPath)},
 		playingPath: playingPath,
 	}
-	m.tracks.syncSelection(keyPressCode(tea.KeyDown), fp.CurrentDirectory)
+	loadTracks(t, &m.tracks)
+	m.tracks.setHeight(10)
+	_, _, _ = m.tracks.Update(keyPressCode(tea.KeyDown))
 	m.enqueueSelected()
 
 	if len(m.queue) != 1 {
@@ -118,12 +129,13 @@ func TestQueueSelectedOnlyQueuesWhenIdle(t *testing.T) {
 
 	fp := filepicker.New()
 	fp.CurrentDirectory = dir
-	fp.AllowedTypes = []string{".mp3"}
+	fp.AllowedTypes = supportedAudioExtensions()
 
 	m := model{
 		tracks: newTracksComponent(fp),
 		help:   help.NewDefault(),
 	}
+	loadTracks(t, &m.tracks)
 	updated, cmd := m.Update(keyPress("q"))
 	got := updated.(model)
 
@@ -167,12 +179,13 @@ func TestPlayPauseQueuesAndStartsSelectedTrackWhenIdleQueueEmpty(t *testing.T) {
 
 	fp := filepicker.New()
 	fp.CurrentDirectory = dir
-	fp.AllowedTypes = []string{".mp3"}
+	fp.AllowedTypes = supportedAudioExtensions()
 
 	m := model{
 		tracks: newTracksComponent(fp),
 		help:   help.NewDefault(),
 	}
+	loadTracks(t, &m.tracks)
 	updated, cmd := m.Update(keyPress("p"))
 	got := updated.(model)
 
@@ -191,6 +204,50 @@ func TestPlayPauseQueuesAndStartsSelectedTrackWhenIdleQueueEmpty(t *testing.T) {
 	t.Cleanup(func() {
 		if err := loaded.track.Control.Source.Close(); err != nil {
 			t.Fatalf("close loaded track: %v", err)
+		}
+	})
+	if loaded.path != selectedPath {
+		t.Fatalf("loaded path = %q, want %q", loaded.path, selectedPath)
+	}
+}
+
+func TestPlayPauseStartsSelectedWAVTrackWhenIdleQueueEmpty(t *testing.T) {
+	dir, err := filepath.Abs("../../sounds/wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fp := filepicker.New()
+	fp.CurrentDirectory = dir
+	fp.AllowedTypes = supportedAudioExtensions()
+
+	m := model{
+		tracks: newTracksComponent(fp),
+		help:   help.NewDefault(),
+	}
+	loadTracks(t, &m.tracks)
+	selectedPath, ok := m.tracks.selectedFilePath()
+	if !ok {
+		t.Fatal("no initial wav selection available")
+	}
+	updated, cmd := m.Update(keyPress("p"))
+	got := updated.(model)
+
+	if cmd == nil {
+		t.Fatal("play/pause with empty queue returned nil command for wav, want selected-track playback command")
+	}
+	if len(got.queue) != 0 {
+		t.Fatalf("queue length = %d, want 0 after starting selected wav track", len(got.queue))
+	}
+
+	msg := cmd()
+	loaded, ok := msg.(loadedTrackMsg)
+	if !ok {
+		t.Fatalf("command returned %T, want loadedTrackMsg", msg)
+	}
+	t.Cleanup(func() {
+		if err := loaded.track.Control.Source.Close(); err != nil {
+			t.Fatalf("close loaded wav track: %v", err)
 		}
 	})
 	if loaded.path != selectedPath {
@@ -325,6 +382,51 @@ func TestQueueViewShowsPlayingTrackAndKeepsFixedWidth(t *testing.T) {
 	}
 }
 
+func TestQueueViewWithSizeKeepsFixedHeightWhileWrappingItems(t *testing.T) {
+	const (
+		width         = queuePanelContentWidth
+		contentHeight = 6
+	)
+
+	m := &model{
+		queue: []queuedTrack{
+			{path: "one.mp3", title: strings.Repeat("wrapped-title ", 4)},
+			{path: "two.mp3", title: strings.Repeat("second-entry ", 4)},
+		},
+	}
+
+	got := m.queueViewWithSize(width, contentHeight)
+	wantHeight := contentHeight + queuePanelStyle(false, width).GetVerticalFrameSize()
+	if height := lipgloss.Height(got); height != wantHeight {
+		t.Fatalf("queue panel height = %d, want %d", height, wantHeight)
+	}
+}
+
+func TestQueueViewWithSizeKeepsSelectedItemVisible(t *testing.T) {
+	const (
+		width         = queuePanelContentWidth
+		contentHeight = 5
+	)
+
+	m := &model{
+		focus:       focusQueue,
+		queueCursor: 2,
+		queue: []queuedTrack{
+			{path: "one.mp3", title: strings.Repeat("first entry ", 5)},
+			{path: "two.mp3", title: strings.Repeat("second entry ", 5)},
+			{path: "three.mp3", title: "selected target"},
+		},
+	}
+
+	got := ansi.Strip(m.queueViewWithSize(width, contentHeight))
+	if !strings.Contains(got, "› 3. selected target") {
+		t.Fatalf("queue viewport = %q, want selected entry visible", got)
+	}
+	if strings.Contains(got, "1. first entry") && strings.Contains(got, "2. second entry") {
+		t.Fatalf("queue viewport = %q, want earlier wrapped entries clipped to keep selection visible", got)
+	}
+}
+
 func TestTruncateBlockKeepsEveryLineWithinWidth(t *testing.T) {
 	const width = 10
 	got := truncateBlock("short\n"+strings.Repeat("x", width*2), width)
@@ -338,16 +440,20 @@ func TestTruncateBlockKeepsEveryLineWithinWidth(t *testing.T) {
 func TestPlayerHelpViewSpansWindowWidth(t *testing.T) {
 	const width = 96
 	m := model{
-		width: width,
-		help:  help.NewDefault(),
+		width:  width,
+		help:   help.NewDefault(),
+		volume: 100,
 	}
 
 	got := m.playerHelpView()
 	if gotWidth := lipgloss.Width(got); gotWidth != width {
 		t.Fatalf("player/help panel width = %d, want %d", gotWidth, width)
 	}
-	if !strings.Contains(got, "Select an MP3 file to play.") {
+	if !strings.Contains(got, "Select an audio file to play.") {
 		t.Fatal("player/help panel does not include idle player status")
+	}
+	if !strings.Contains(got, "vol 100%") {
+		t.Fatal("player/help panel does not include volume status")
 	}
 	if !strings.Contains(got, "play/pause") {
 		t.Fatal("player/help panel does not include contextual help")
@@ -476,5 +582,243 @@ func TestQueueLoopRequeuesFinishedTrackBehindPendingTracks(t *testing.T) {
 	}
 	if got.queue[0].title != "done.mp3" {
 		t.Fatalf("queued title = %q, want done.mp3", got.queue[0].title)
+	}
+}
+
+func TestAudioMeterSpectrogramRightAlignsFramesAndMapsHighBandsToTop(t *testing.T) {
+	meter := &audioMeter{
+		bins: make([]float64, 4),
+		frames: [][]float64{
+			{0.1, 0.2, 0.3, 0.4},
+			{0.5, 0.6, 0.7, 0.8},
+		},
+	}
+
+	grid := meter.Spectrogram(4, 2)
+	if len(grid) != 2 {
+		t.Fatalf("spectrogram rows = %d, want 2", len(grid))
+	}
+	if len(grid[0]) != 4 {
+		t.Fatalf("spectrogram columns = %d, want 4", len(grid[0]))
+	}
+
+	topWant := []float64{0, 0, 0.4, 0.8}
+	bottomWant := []float64{0, 0, 0.2, 0.6}
+	for i, want := range topWant {
+		if got := grid[0][i]; got != want {
+			t.Fatalf("top row column %d = %v, want %v", i, got, want)
+		}
+	}
+	for i, want := range bottomWant {
+		if got := grid[1][i]; got != want {
+			t.Fatalf("bottom row column %d = %v, want %v", i, got, want)
+		}
+	}
+}
+
+func TestAudioMeterNamedBandsExposeBassMidTrebleLevels(t *testing.T) {
+	meter := &audioMeter{
+		bins: []float64{
+			0.9, 0.2, 0.1, 0.1,
+			0.2, 0.8, 0.3, 0.2,
+			0.1, 0.2, 0.7, 0.1,
+		},
+		sampleRate: 48000,
+	}
+
+	levels := meter.NamedBands()
+	if len(levels) != 3 {
+		t.Fatalf("named band count = %d, want 3", len(levels))
+	}
+	if levels[0].Label != "Bass" || levels[0].Value <= 0 {
+		t.Fatalf("bass level = %#v, want labeled non-zero bass band", levels[0])
+	}
+	if levels[1].Label != "Mid" || levels[1].Value <= 0 {
+		t.Fatalf("mid level = %#v, want labeled non-zero mid band", levels[1])
+	}
+	if levels[2].Label != "Treb" || levels[2].Value <= 0 {
+		t.Fatalf("treble level = %#v, want labeled non-zero treble band", levels[2])
+	}
+}
+
+func TestSeekAheadMovesCurrentTrackPosition(t *testing.T) {
+	source := &testStream{len: 200, position: 25}
+	format := beep.Format{SampleRate: 10, NumChannels: 2, Precision: 2}
+	m := model{
+		playing: track.New(source, &format, "seek.mp3", 20*time.Second),
+		help:    help.NewDefault(),
+		volume:  100,
+	}
+
+	updated, cmd := m.Update(keyPressCode(tea.KeyRight))
+	got := updated.(model)
+
+	if cmd != nil {
+		t.Fatal("seek returned command, want nil")
+	}
+	if source.position != 75 {
+		t.Fatalf("position = %d, want 75 after +5s seek", source.position)
+	}
+	if got.err != nil {
+		t.Fatalf("seek set error = %v, want nil", got.err)
+	}
+}
+
+func TestSeekPastEndStartsNextQueuedTrack(t *testing.T) {
+	source := &testStream{len: 100, position: 80}
+	format := beep.Format{SampleRate: 10, NumChannels: 2, Precision: 2}
+	m := model{
+		playing:     track.New(source, &format, "done.mp3", 10*time.Second),
+		playingPath: "done.mp3",
+		queue: []queuedTrack{{
+			path:  "next.mp3",
+			title: "next.mp3",
+		}},
+		help:   help.NewDefault(),
+		volume: 100,
+	}
+
+	updated, cmd := m.Update(keyPressCode(tea.KeyRight))
+	got := updated.(model)
+
+	if cmd == nil {
+		t.Fatal("seek past end returned nil command, want playback command")
+	}
+	if len(got.queue) != 0 {
+		t.Fatalf("queue length = %d, want 0 after dequeuing next track", len(got.queue))
+	}
+	if got.err != nil {
+		t.Fatalf("seek past end set error = %v, want nil", got.err)
+	}
+}
+
+func TestSeekPastEndWhileTransitioningDoesNotQueueAnotherAdvance(t *testing.T) {
+	source := &testStream{len: 100, position: 80}
+	format := beep.Format{SampleRate: 10, NumChannels: 2, Precision: 2}
+	m := model{
+		playing:     track.New(source, &format, "done.mp3", 10*time.Second),
+		playingPath: "done.mp3",
+		queue: []queuedTrack{
+			{path: "next.mp3", title: "next.mp3"},
+			{path: "third.mp3", title: "third.mp3"},
+		},
+		help:   help.NewDefault(),
+		volume: 100,
+	}
+
+	updated, cmd := m.Update(keyPressCode(tea.KeyRight))
+	got := updated.(model)
+	if cmd == nil {
+		t.Fatal("first seek past end returned nil command, want playback command")
+	}
+	if !got.transitioning {
+		t.Fatal("transitioning = false, want true after scheduling next track")
+	}
+	if len(got.queue) != 1 {
+		t.Fatalf("queue length = %d, want 1 after first dequeue", len(got.queue))
+	}
+
+	updated, cmd = got.Update(keyPressCode(tea.KeyRight))
+	got = updated.(model)
+	if cmd != nil {
+		t.Fatal("second seek during transition returned command, want nil")
+	}
+	if len(got.queue) != 1 {
+		t.Fatalf("queue length = %d, want unchanged queue while transitioning", len(got.queue))
+	}
+}
+
+func TestSeekPastEndStopsPlaybackWhenQueueEmpty(t *testing.T) {
+	source := &testStream{len: 100, position: 80}
+	format := beep.Format{SampleRate: 10, NumChannels: 2, Precision: 2}
+	m := model{
+		playing:     track.New(source, &format, "done.mp3", 10*time.Second),
+		playingPath: "done.mp3",
+		help:        help.NewDefault(),
+		volume:      100,
+	}
+
+	updated, cmd := m.Update(keyPressCode(tea.KeyRight))
+	got := updated.(model)
+
+	if cmd != nil {
+		t.Fatal("seek past end returned command with empty queue, want nil")
+	}
+	if got.isPlaying() {
+		t.Fatal("player still marked playing after seek past end with empty queue")
+	}
+	if got.err != nil {
+		t.Fatalf("seek past end set error = %v, want nil", got.err)
+	}
+}
+
+func TestMuteToggleUpdatesStatus(t *testing.T) {
+	m := model{
+		help:   help.NewDefault(),
+		volume: 100,
+	}
+
+	updated, cmd := m.Update(keyPress("m"))
+	got := updated.(model)
+
+	if cmd != nil {
+		t.Fatal("mute returned command, want nil")
+	}
+	if !got.muted {
+		t.Fatal("muted = false, want true after toggle")
+	}
+	if got.volumeLabel() != "muted" {
+		t.Fatalf("volume label = %q, want muted", got.volumeLabel())
+	}
+}
+
+func TestVolumeDownClampsAtZero(t *testing.T) {
+	m := model{
+		help:   help.NewDefault(),
+		volume: 5,
+	}
+
+	updated, cmd := m.Update(keyPress("-"))
+	got := updated.(model)
+
+	if cmd != nil {
+		t.Fatal("volume down returned command, want nil")
+	}
+	if got.volume != 0 {
+		t.Fatalf("volume = %d, want 0", got.volume)
+	}
+}
+
+func TestVolumeUpRespondsToPlusKey(t *testing.T) {
+	m := model{
+		help:   help.NewDefault(),
+		volume: 100,
+	}
+
+	updated, cmd := m.Update(keyPress("+"))
+	got := updated.(model)
+
+	if cmd != nil {
+		t.Fatal("volume up returned command, want nil")
+	}
+	if got.volume != 110 {
+		t.Fatalf("volume = %d, want 110", got.volume)
+	}
+}
+
+func TestVolumeDownRespondsToUnderscoreKey(t *testing.T) {
+	m := model{
+		help:   help.NewDefault(),
+		volume: 100,
+	}
+
+	updated, cmd := m.Update(keyPress("_"))
+	got := updated.(model)
+
+	if cmd != nil {
+		t.Fatal("volume down returned command, want nil")
+	}
+	if got.volume != 90 {
+		t.Fatalf("volume = %d, want 90", got.volume)
 	}
 }

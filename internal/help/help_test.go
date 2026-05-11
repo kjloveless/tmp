@@ -16,6 +16,24 @@ func TestDefaultLoopBindingUsesLKey(t *testing.T) {
 	}
 }
 
+func TestDefaultPlaybackBindingsExposeSeekAndMuteKeys(t *testing.T) {
+	if got := DefaultKeyMap.Global.SeekBack.Help().Key; got != "←" {
+		t.Fatalf("seek back help key = %q, want ←", got)
+	}
+	if got := DefaultKeyMap.Global.SeekAhead.Help().Key; got != "→" {
+		t.Fatalf("seek ahead help key = %q, want →", got)
+	}
+	if got := DefaultKeyMap.Global.Mute.Help().Desc; got != "mute" {
+		t.Fatalf("mute help desc = %q, want mute", got)
+	}
+	if keys := DefaultKeyMap.Global.VolumeUp.Keys(); len(keys) < 2 || keys[1] != "+" {
+		t.Fatalf("volume up keys = %#v, want shifted + binding", keys)
+	}
+	if keys := DefaultKeyMap.Global.VolumeDown.Keys(); len(keys) < 2 || keys[1] != "_" {
+		t.Fatalf("volume down keys = %#v, want shifted _ binding", keys)
+	}
+}
+
 func TestNewHelpUIPanicsOnDuplicateScopeBindings(t *testing.T) {
 	keys := DefaultKeyMap
 	keys.Queue.Down = key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "down"))

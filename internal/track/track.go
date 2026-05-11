@@ -32,16 +32,67 @@ func (t Track) Position() time.Duration {
 	panic("failure to retrieve position from track")
 }
 
+func (t Track) Duration() time.Duration {
+	return t.length
+}
+
+func (t Track) Remaining() time.Duration {
+	remaining := t.length - t.Position()
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}
+
 func (t Track) Percent() float64 {
+	if t.length <= 0 {
+		return 0
+	}
 	return t.Position().Seconds() / t.length.Seconds()
 }
 
+func displayDuration(d time.Duration) string {
+	if d <= 0 {
+		return "0:00.000"
+	}
+	d = d.Truncate(time.Millisecond)
+
+	totalMilliseconds := d / time.Millisecond
+	hours := totalMilliseconds / (60 * 60 * 1000)
+	minutes := (totalMilliseconds / (60 * 1000)) % 60
+	seconds := (totalMilliseconds / 1000) % 60
+	milliseconds := totalMilliseconds % 1000
+
+	if hours > 0 {
+		return fmt.Sprintf("%d:%02d:%02d.%03d", hours, minutes, seconds, milliseconds)
+	}
+	return fmt.Sprintf("%d:%02d.%03d", minutes, seconds, milliseconds)
+}
+
 func (t Track) String() string {
+	position := t.Position()
+	if position < 0 {
+		position = 0
+	}
+	if position > t.length {
+		position = t.length
+	}
+
+	remaining := t.length - position
+	if remaining < 0 {
+		remaining = 0
+	}
+	percent := 0.0
+	if t.length > 0 {
+		percent = position.Seconds() / t.length.Seconds()
+	}
+
 	return fmt.Sprintf(
-		"%s %s : %s",
-		t.progress.ViewAs(t.Percent()),
-		t.Position().Round(time.Second),
-		t.length.Round(time.Second))
+		"%s %s / %s (-%s)",
+		t.progress.ViewAs(percent),
+		displayDuration(position),
+		displayDuration(t.length),
+		displayDuration(remaining))
 }
 
 func New(

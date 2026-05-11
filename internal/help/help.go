@@ -19,11 +19,16 @@ const (
 )
 
 type GlobalKeyMap struct {
-	PlayPause key.Binding
-	FocusNext key.Binding
-	Loop      key.Binding
-	Quit      key.Binding
-	KeyHelp   key.Binding
+	PlayPause  key.Binding
+	SeekBack   key.Binding
+	SeekAhead  key.Binding
+	VolumeDown key.Binding
+	VolumeUp   key.Binding
+	Mute       key.Binding
+	FocusNext  key.Binding
+	Loop       key.Binding
+	Quit       key.Binding
+	KeyHelp    key.Binding
 }
 
 type TracksKeyMap struct {
@@ -47,6 +52,26 @@ var DefaultKeyMap = KeyMap{
 		PlayPause: key.NewBinding(
 			key.WithKeys("p"),
 			key.WithHelp("p", "play/pause"),
+		),
+		SeekBack: key.NewBinding(
+			key.WithKeys("left"),
+			key.WithHelp("←", "seek -5s"),
+		),
+		SeekAhead: key.NewBinding(
+			key.WithKeys("right"),
+			key.WithHelp("→", "seek +5s"),
+		),
+		VolumeDown: key.NewBinding(
+			key.WithKeys("-", "_"),
+			key.WithHelp("-", "volume down"),
+		),
+		VolumeUp: key.NewBinding(
+			key.WithKeys("=", "+"),
+			key.WithHelp("+", "volume up"),
+		),
+		Mute: key.NewBinding(
+			key.WithKeys("m"),
+			key.WithHelp("m", "mute"),
 		),
 		FocusNext: key.NewBinding(
 			key.WithKeys("tab"),
@@ -153,6 +178,11 @@ func (d displayKeyMap) FullHelp() [][]key.Binding { return d.full }
 func (hu HelpUI) contextualBindings(focus FocusArea) []key.Binding {
 	bindings := []key.Binding{
 		hu.keys.Global.PlayPause,
+		hu.keys.Global.SeekBack,
+		hu.keys.Global.SeekAhead,
+		hu.keys.Global.VolumeDown,
+		hu.keys.Global.VolumeUp,
+		hu.keys.Global.Mute,
 		hu.keys.Global.FocusNext,
 		hu.keys.Global.Loop,
 		hu.keys.Global.Quit,
@@ -207,7 +237,18 @@ func (hu HelpUI) ListView(focus FocusArea) string {
 		return strings.Join(rows, "\n")
 	}
 
-	globalBindings := []key.Binding{hu.keys.Global.PlayPause, hu.keys.Global.FocusNext, hu.keys.Global.Loop, hu.keys.Global.Quit, hu.keys.Global.KeyHelp}
+	globalBindings := []key.Binding{
+		hu.keys.Global.PlayPause,
+		hu.keys.Global.SeekBack,
+		hu.keys.Global.SeekAhead,
+		hu.keys.Global.VolumeDown,
+		hu.keys.Global.VolumeUp,
+		hu.keys.Global.Mute,
+		hu.keys.Global.FocusNext,
+		hu.keys.Global.Loop,
+		hu.keys.Global.Quit,
+		hu.keys.Global.KeyHelp,
+	}
 	tracksBindings := []key.Binding{hu.keys.Tracks.QueueSelected}
 	queueBindings := []key.Binding{hu.keys.Queue.Up, hu.keys.Queue.Down, hu.keys.Queue.DequeueSelected}
 
@@ -248,7 +289,18 @@ func validateOrPanic(keys KeyMap) {
 		}
 	}
 
-	assertUnique("global", []key.Binding{keys.Global.PlayPause, keys.Global.FocusNext, keys.Global.Loop, keys.Global.Quit, keys.Global.KeyHelp})
+	assertUnique("global", []key.Binding{
+		keys.Global.PlayPause,
+		keys.Global.SeekBack,
+		keys.Global.SeekAhead,
+		keys.Global.VolumeDown,
+		keys.Global.VolumeUp,
+		keys.Global.Mute,
+		keys.Global.FocusNext,
+		keys.Global.Loop,
+		keys.Global.Quit,
+		keys.Global.KeyHelp,
+	})
 	assertUnique("tracks", []key.Binding{keys.Tracks.QueueSelected})
 	assertUnique("queue", []key.Binding{keys.Queue.Up, keys.Queue.Down, keys.Queue.DequeueSelected})
 }
